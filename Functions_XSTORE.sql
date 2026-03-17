@@ -1,0 +1,25 @@
+------------------------------
+--- ****** DATABASE ****** ---
+IF DB_ID('XSTORE') IS NULL
+BEGIN
+    CREATE DATABASE XSTORE;
+END
+GO
+
+USE XSTORE;
+GO
+
+--- ***** FUNCIONES ***** ---
+CREATE OR ALTER FUNCTION DBO.FUNCIONX(
+    @TEXTO VARCHAR(1)
+) 
+RETURNS BIT
+AS
+BEGIN
+    
+    -- TODA LA LOGICA
+
+    RETURN 1;
+
+END
+GO
