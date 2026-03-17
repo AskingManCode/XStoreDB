@@ -19,7 +19,7 @@ CREATE PROCEDURE RegistrarAuditoria_SP
 	@Descripcion VARCHAR(250),
 	@RESPUESTA BIT OUTPUT
 AS
-BEGIN -- Pruebita
+BEGIN
 	
 	SET NOCOUNT ON;
 
