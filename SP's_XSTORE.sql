@@ -30,7 +30,7 @@ BEGIN
 	-- Validación del ID persona
 	IF NOT EXISTS(
 		SELECT 1
-		FROM DBO.PERSONAS_TB
+		FROM PERSONAS_TB
 		WHERE PER_ID = @Persona_ID
 	)
 	BEGIN
