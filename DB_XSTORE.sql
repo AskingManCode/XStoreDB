@@ -16,7 +16,7 @@ BEGIN
         TIPO_PER_ID INT IDENTITY(1,1), -- PK
         TIPO_PER_Nombre VARCHAR(50) NOT NULL, -- Cliente Normal, Cliente Frecuente, Cliente Premium -- extra: Vendedor, Administrador
         TIPO_PER_DescuentoPct DECIMAL(5,2) NOT NULL, -- 0%, 10%, 25% -- extra: 15%, 20%
-        TIPO_PER_MontoMeta DECIMAL(10,2) NOT NULL,
+        TIPO_PER_MontoMeta DECIMAL(10,2) NOT NULL, 
         TIPO_PER_Estado BIT NOT NULL
             CONSTRAINT DF_TIPO_PER_Estado 
                 DEFAULT (1),
@@ -140,7 +140,7 @@ BEGIN
 	    AUD_ID BIGINT IDENTITY(1,1), -- PK
         AUD_PER_ID INT NOT NULL, -- FK          -- ID de la Persona
 	    AUD_Accion VARCHAR(25) NOT NULL,        -- Acción en base de datos
-	    AUD_TablaAfectada VARCHAR(50) NOT NULL, -- Nombre tabla afectada
+	    AUD_TablaAfectada VARCHAR(75) NOT NULL, -- Nombre tabla afectada
 	    AUD_FilaAfectada BIGINT NOT NULL,       -- ID de la fila afectada
 	    AUD_Descripcion VARCHAR(250) NOT NULL,  -- Descripción auditable
 	    AUD_FechaHora DATETIME2 NOT NULL
@@ -161,7 +161,7 @@ BEGIN
         -- CHECKS
 
         CONSTRAINT CK_AUD_DB_Accion
-            CHECK (AUD_Accion IN ('INSERT', 'UPDATE', 'DELETE')),
+            CHECK (AUD_Accion IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')),
 
         CONSTRAINT CK_AUD_TablaAfectada
             CHECK (LEN(TRIM(AUD_TablaAfectada)) > 0
@@ -170,7 +170,7 @@ BEGIN
                     AND AUD_TablaAfectada NOT LIKE '%  %'),
 
         CONSTRAINT CK_AUD_FilaAfectada
-            CHECK (AUD_FilaAfectada > 0),
+            CHECK (AUD_FilaAfectada >= 0),
 
         CONSTRAINT CK_AUD_Descripcion
             CHECK (LEN(TRIM(AUD_Descripcion)) > 10 -- Mínimo de detalle para que sea un comentario útil
@@ -186,7 +186,7 @@ IF OBJECT_ID('DBO.ROLES_TB', 'U') IS NULL
 BEGIN
     CREATE TABLE DBO.ROLES_TB(
 	    ROL_ID INT IDENTITY(1,1), -- PK
-        ROL_Nombre VARCHAR(50) NOT NULL, -- Administrador, Vendedor, Cliente 
+        ROL_Nombre VARCHAR(50) NOT NULL, -- Sistema, Administrador, Vendedor, Cliente
         ROL_Estado BIT NOT NULL
             CONSTRAINT DF_ROL_Estado
                 DEFAULT (1),
@@ -218,11 +218,9 @@ BEGIN
     CREATE TABLE DBO.SESIONES_TB(
 	    SESION_ID INT IDENTITY(1,1), -- PK
         SESION_PER_ID INT NOT NULL, -- FK
-	    SESION_NombreUsuario VARCHAR(50) NOT NULL,
+	    SESION_NombreUsuario VARCHAR(75) NOT NULL,
 	    SESION_PwdHash VARCHAR(255) NOT NULL,
 	    SESION_ROL_ID INT NOT NULL, -- FK
-        SESION_Token VARCHAR(750) NULL,
-        SESION_TokenRefresh VARCHAR(750) NULL,
         SESION_Estado BIT NOT NULL
             CONSTRAINT DF_SESION_Estado
                 DEFAULT (1),
@@ -255,20 +253,6 @@ BEGIN
                 AND SESION_PwdHash NOT LIKE ' %'
                 AND SESION_PwdHash NOT LIKE '% '
                 AND SESION_PwdHash NOT LIKE '% %'),
-
-        CONSTRAINT CK_SESION_Token
-            CHECK(SESION_Token IS NULL
-                OR (LEN(TRIM(SESION_Token)) > 0
-                    AND SESION_Token NOT LIKE ' %'
-                    AND SESION_Token NOT LIKE '% '
-                    AND SESION_Token NOT LIKE '% %')),
-
-        CONSTRAINT CK_SESION_TokenRefresh
-            CHECK(SESION_TokenRefresh IS NULL
-                OR (LEN(TRIM(SESION_TokenRefresh)) > 0
-                AND SESION_TokenRefresh NOT LIKE ' %'
-                AND SESION_TokenRefresh NOT LIKE '% '
-                AND SESION_TokenRefresh NOT LIKE '% %')),
 
         -- UNIQUES
 
@@ -803,6 +787,3 @@ BEGIN
     ); 
 END
 GO
-
-
-

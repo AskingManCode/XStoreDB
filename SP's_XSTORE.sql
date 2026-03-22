@@ -9,97 +9,269 @@ GO
 USE XSTORE;
 GO
 
+/* 
+*	NOTA: Cada Procedimiento Almacenado es probado y validado varias veces
+*	hasta que se identifique que está lo más funcional posible, cuálquier error, avisar
+*/
 
 ---- ****** PROCEDIMIENTOS ALMACENADOS ****** ----
-CREATE PROCEDURE REGISTRAR_AUDITORIA_SP
-	@Persona_ID INT,
-	@Accion VARCHAR(25),
-	@TablaAfectada VARCHAR(50),
-	@FilaAfectada BIGINT,
-	@Descripcion VARCHAR(250),
-	@RESPUESTA BIT OUTPUT
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_AUDITORIA_SP
+	@Persona_ID			INT, -- ID de la Persona Responsable
+	@Accion				VARCHAR(25),
+	@TablaAfectada		VARCHAR(75),
+	@FilaAfectada		BIGINT,
+	@Descripcion		VARCHAR(250)
+AS
+BEGIN
+	
+	SET NOCOUNT ON;
+	SET XACT_ABORT ON; -- Aborta si hay error de ejecución
+
+	BEGIN TRY
+		
+		-- NORMALIZACIÓN
+		SET @Accion = UPPER(TRIM(ISNULL(@Accion, '')));
+		SET @TablaAfectada = UPPER(TRIM(ISNULL(@TablaAfectada, '')));
+		SET @Descripcion = TRIM(ISNULL(@Descripcion, ''));
+
+		-- VALIDACIONES
+		IF NOT EXISTS(
+			SELECT 1
+			FROM DBO.PERSONAS_TB
+			WHERE PER_ID = @Persona_ID
+		)
+		BEGIN
+			RAISERROR('Persona_ID [%d] no existe para auditoría.', 16, 1, @Persona_ID);
+		END
+		
+		IF @Accion NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+		BEGIN
+			RAISERROR('Acción [%s] no existe.', 16, 1, @Accion);
+		END
+
+		IF LEN(@TablaAfectada) < 1
+		BEGIN
+			RAISERROR('Tabla no válida para auditoría', 16, 1)
+		END
+
+		IF (@Accion = 'SELECT' AND @FilaAfectada != 0)
+		BEGIN
+			RAISERROR('ID de fila afectada no válido para auditoría.', 16, 1);
+		END
+
+		IF @Accion != 'SELECT' AND @FilaAfectada <= 0
+		BEGIN
+			RAISERROR('ID de fila afectada no válido para auditoría.', 16, 1);
+		END
+
+		IF LEN(@Descripcion) <= 10
+		BEGIN
+			RAISERROR('La descripción para la auditoría es muy corta.', 16, 10);
+		END
+
+		INSERT INTO DBO.AUDITORIAS_TB(
+			AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada, AUD_Descripcion
+		)
+		VALUES (
+			@Persona_ID, @Accion, @TablaAfectada, @FilaAfectada, @Descripcion
+		);
+
+	END TRY
+	BEGIN CATCH
+		
+		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+		DECLARE @ErrorState INT = ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+	END CATCH
+END;
+GO
+
+
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_AUDITORIAS_SP
+	@NombreUsuario		VARCHAR(75), -- Responsable 
+	@FechaFiltro		DATE = NULL,
+	@TablaFiltro		VARCHAR(75) = NULL	
+AS
+BEGIN
+
+	SET NOCOUNT ON;
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; -- Evita que se bloqueen otras tablas de alta transaccionalidad
+	
+	DECLARE @Persona_ID INT;
+
+	BEGIN TRY
+		
+		SELECT @Persona_ID = S.SESION_PER_ID
+		FROM DBO.SESIONES_TB S
+		INNER JOIN DBO.ROLES_TB R
+			ON S.SESION_ROL_ID = R.ROL_ID
+		WHERE S.SESION_NombreUsuario = @NombreUsuario
+			AND S.SESION_Estado = 1
+			AND R.ROL_Nombre = 'Administrador';
+
+		IF @Persona_ID IS NULL
+		BEGIN
+			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos para consultar auditorias.', 16, 1, @NombreUsuario);
+			RETURN;
+		END;
+
+		SELECT 
+			P.PER_NombreCompleto AS [Responsable]
+			, A.AUD_Accion AS [Acción]
+			, A.AUD_TablaAfectada AS [Tabla Afectada]
+			, A.AUD_FilaAfectada AS [Fila Afectada]
+			, A.AUD_Descripcion AS [Descripción]
+			, A.AUD_FechaHora AS [Fecha y Hora]
+		FROM DBO.AUDITORIAS_TB A
+		INNER JOIN DBO.PERSONAS_TB P
+			ON A.AUD_PER_ID = P.PER_ID
+		WHERE (@FechaFiltro IS NULL 
+				OR CAST(A.AUD_FechaHora AS DATE) = @FechaFiltro) AND
+				(@TablaFiltro IS NULL OR A.AUD_TablaAfectada = UPPER(TRIM(@TablaFiltro)))
+		ORDER BY A.AUD_FechaHora DESC; -- Fechas recientes primero
+
+		EXEC REGISTRAR_AUDITORIA_SP
+			@Persona_ID = @Persona_ID,
+			@Accion = 'SELECT',
+			@TablaAfectada = 'AUDITORIAS_TB',
+			@FilaAfectada = 0,
+			@Descripcion = 'Se usó CONSULTAR_AUDITORIAS_SP.'
+
+	END TRY
+	BEGIN CATCH
+		
+		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+		DECLARE @ErrorState INT = ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+	END CATCH
+END;
+GO
+
+
+CREATE OR ALTER PROCEDURE CONSULTAR_ROLES_SP
+	@NombreUsuario		VARCHAR(75) -- Responsable
+AS
+BEGIN
+
+	SET NOCOUNT ON;
+
+	DECLARE @Persona_ID INT;
+
+	BEGIN TRY
+
+		SELECT @Persona_ID = S.SESION_PER_ID
+			FROM DBO.SESIONES_TB S
+			INNER JOIN DBO.ROLES_TB R
+				ON S.SESION_ROL_ID = R.ROL_ID
+			WHERE S.SESION_NombreUsuario = @NombreUsuario
+				AND S.SESION_Estado = 1;
+
+			IF @Persona_ID IS NULL
+			BEGIN
+				RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+				RETURN;
+			END;
+
+		SELECT 
+			ROL_Nombre AS [Rol]
+			, ROL_Estado AS [Estado]
+		FROM DBO.ROLES_TB;
+
+		EXEC REGISTRAR_AUDITORIA_SP
+			@Persona_ID = @Persona_ID,
+			@Accion = 'SELECT',
+			@TablaAfectada = 'ROLES_TB',
+			@FilaAfectada = 0,
+			@Descripcion = 'Se usó CONSULTAR_ROLES_SP.'
+
+	END TRY
+	BEGIN CATCH
+
+		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+		DECLARE @ErrorState INT = ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+	END CATCH
+END;
+GO
+
+-- No probado aún --- 
+CREATE OR ALTER PROCEDURE REGISTRAR_ROL_SP
+	@NombreUsuario		VARCHAR(75), -- Responsable
+	@NuevoRol			VARCHAR(50)
 AS
 BEGIN
 	SET NOCOUNT ON;
 
-	-- Normalización
-	SET @Accion = UPPER(TRIM(@Accion));
-	SET @TablaAfectada = TRIM(@TablaAfectada);
-	SET @Descripcion = TRIM(@Descripcion); 
-
-	-- Validación del ID persona
-	IF NOT EXISTS(
-		SELECT 1
-		FROM PERSONAS_TB
-		WHERE PER_ID = @Persona_ID
-	)
-	BEGIN
-		SET @RESPUESTA = 0;
-		RETURN;
-	END
-
-	IF @Accion NOT IN ('INSERT', 'UPDATE', 'DELETE')
-	BEGIN
-		SET @RESPUESTA = 0;
-		RETURN;
-	END
+	DECLARE @Persona_ID INT;
+	SET @NuevoRol = TRIM(ISNULL(@NuevoRol, ''))
 
 	BEGIN TRY
-		
-		BEGIN TRAN;
 
-		INSERT INTO AUDITORIAS_TB(
-			AUD_PER_ID, 
-			AUD_Accion, 
-			AUD_TablaAfectada, 
-			AUD_FilaAfectada, 
-			AUD_Descripcion
-		) 
-		VALUES
-		(
-			@Persona_ID,
-			@Accion,
-			@TablaAfectada,
-			@FilaAfectada,
-			@Descripcion
-		)
+		BEGIN TRANSACTION;
+
+		SELECT @Persona_ID = S.SESION_PER_ID
+		FROM DBO.SESIONES_TB S
+		INNER JOIN DBO.ROLES_TB R
+			ON S.SESION_ROL_ID = R.ROL_ID
+		WHERE S.SESION_NombreUsuario = @NombreUsuario
+			AND S.SESION_Estado = 1
+			AND R.ROL_Nombre = 'Administrador';
+
+		IF @Persona_ID IS NULL
+		BEGIN
+			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos para agregar nuevos roles.', 16, 1, @NombreUsuario);
+			RETURN;
+		END;
+
+		IF LEN(@NuevoRol) <= 0
+		BEGIN
+			RAISERROR('Error: El rol no es válido.', 16, 1);
+			ROLLBACK;
+			RETURN;
+		END
+
+		-- Guarda Persona ID
+		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+
+		INSERT INTO ROLES_TB (ROL_Nombre)
+		VALUES (@NuevoRol);
 
 		COMMIT;
 
-		SET @RESPUESTA = 1;
-
 	END TRY
 	BEGIN CATCH
-		ROLLBACK;
-		SET @RESPUESTA = 0;
+		
+		IF @@TRANCOUNT > 0 ROLLBACK;
+
+		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+		DECLARE @ErrorState INT = ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
 	END CATCH
 END;
-
-
-DECLARE @Resultado BIT;
-
-EXEC REGISTRAR_AUDITORIA_SP
-	@Persona_ID = 1,
-	@Accion = 'INSERT',
-	@TablaAfectada = 'PRODUCTOS_TB',
-	@FilaAfectada = 50,
-	@Descripcion = 'Registro de prueba exitoso',
-	@RESPUESTA = @Resultado OUTPUT;
-
-SELECT @Resultado AS '¿Fue exitoso?';
-
+GO
 
 
 /*
 	SP's XStore
 
-	REGISTRAR_AUDITORIA_SP (Parámetros - Persona_id, accion[insert, delete, update], tablaAfectada, Descripción[mas de 10 letras])
-	CONSULTA_AUDITORIAS_SP (Select y join de todas las auditorias con nombre de persona y su nombre de usuario)
+	X REGISTRAR_AUDITORIA_SP (Parámetros - Persona_id, accion[insert, delete, update], tablaAfectada, Descripción[mas de 10 letras])
+	X CONSULTA_AUDITORIAS_SP (Select y join de todas las auditorias con nombre de persona)
 
-	CONSULTAR_ROLES_SP (Select simple Roles)
-	REGISTRAR_ROL_SP (Insert a Roles)
-	MODIFICAR_ROL_SP (Update a Roles)
-	CAMBIAR_ESTADO_ROL_SP (Activar o Inactivar Rol)
+	X CONSULTAR_ROLES_SP (Select simple Roles)
+	X REGISTRAR_ROL_SP (Insert a Roles)
+	MODIFICAR_ROL_SP (Update a Roles) 
 
 	CONSULTAR_UBICACIONES_SP (Select simple nombre)
 	REGISTRAR_UBICACION_SP (Insert UBI_INVENTARIOS)
