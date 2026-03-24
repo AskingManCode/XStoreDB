@@ -40,12 +40,24 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @Persona_ID INT = CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen VARCHAR(75) = CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR);
+    DECLARE @Rol_ID INT;
+    DECLARE @DescripcionX VARCHAR(250);
+
 
     IF @Persona_ID IS NULL 
         SET @Persona_ID = 1; -- El sistema
- 
-    DECLARE @Rol_ID INT = (SELECT ROL_ID FROM INSERTED);
-    DECLARE @DescripcionX VARCHAR(250) = 'Se usó REGISTRAR_ROL_SP y REGISTRAR_ROL_TRG. (Rol registrado: ' + (SELECT ROL_Nombre From INSERTED) + ')';
+    
+    IF @Origen IS NOT NULL 
+    BEGIN
+        SET @DescripcionX = 'Se usó ' + @Origen + ' y REGISTRAR_ROL_TRG. (Rol registrado: ' + (SELECT ROL_Nombre From INSERTED) + ')';
+    END
+    ELSE 
+    BEGIN
+        SET @DescripcionX = 'Se usó REGISTRAR_ROL_TRG. (Rol registrado: ' + (SELECT ROL_Nombre From INSERTED) + ')';
+    END
+
+    SET @Rol_ID = (SELECT ROL_ID FROM INSERTED);
     
     EXEC REGISTRAR_AUDITORIA_SP
 	    @Persona_ID = @Persona_ID,
@@ -54,9 +66,9 @@ BEGIN
 	    @FilaAfectada = @Rol_ID,
 	    @Descripcion = @DescripcionX; 
 
+        -- Cambiar formato de insertado debido a que solo guarda una auditoría
 END;
 GO
-
 
 CREATE OR ALTER TRIGGER DBO.MODIFICAR_ROL_TRG
 ON DBO.ROLES_TB
