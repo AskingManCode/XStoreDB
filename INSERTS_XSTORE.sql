@@ -45,6 +45,8 @@ VALUES (
     'Cliente'
 );
 
+SELECT * FROM ROLES_TB
+
 INSERT INTO DBO.SESIONES_TB (
     SESION_PER_ID,
     SESION_NombreUsuario,
@@ -53,9 +55,9 @@ INSERT INTO DBO.SESIONES_TB (
 )
 VALUES (
     1,
-    'AskingMansOz',
+    'AskingMansOn',
     '123456789',
-    1
+    3
 );
 
 INSERT INTO DBO.SESIONES_TB (

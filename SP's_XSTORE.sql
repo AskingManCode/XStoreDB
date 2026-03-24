@@ -46,7 +46,7 @@ BEGIN
 		
 		IF @Accion NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
 		BEGIN
-			RAISERROR('Acción [%s] no existe.', 16, 1, @Accion);
+			RAISERROR('Acción [%s] no válida para auditoría.', 16, 1, @Accion);
 		END
 
 		IF LEN(@TablaAfectada) < 1
@@ -104,6 +104,7 @@ BEGIN
 
 	BEGIN TRY
 		
+		-- VALIDACIÓN DE PERMISO Y OBTENER ID
 		SELECT @Persona_ID = S.SESION_PER_ID
 		FROM DBO.SESIONES_TB S
 		INNER JOIN DBO.ROLES_TB R
@@ -114,7 +115,7 @@ BEGIN
 
 		IF @Persona_ID IS NULL
 		BEGIN
-			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos para consultar auditorias.', 16, 1, @NombreUsuario);
+			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
 			RETURN;
 		END;
 
@@ -203,12 +204,13 @@ BEGIN
 END;
 GO
 
--- No probado aún --- 
+
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_ROL_SP
 	@NombreUsuario		VARCHAR(75), -- Responsable
 	@NuevoRol			VARCHAR(50)
 AS
 BEGIN
+
 	SET NOCOUNT ON;
 
 	DECLARE @Persona_ID INT;
@@ -218,6 +220,7 @@ BEGIN
 
 		BEGIN TRANSACTION;
 
+		-- VALIDACIÓN DE PERMISO Y OBTENER ID
 		SELECT @Persona_ID = S.SESION_PER_ID
 		FROM DBO.SESIONES_TB S
 		INNER JOIN DBO.ROLES_TB R
@@ -228,7 +231,8 @@ BEGIN
 
 		IF @Persona_ID IS NULL
 		BEGIN
-			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos para agregar nuevos roles.', 16, 1, @NombreUsuario);
+			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+			ROLLBACK;
 			RETURN;
 		END;
 
@@ -262,6 +266,82 @@ BEGIN
 END;
 GO
 
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_ROL_SP
+	@NombreUsuario		VARCHAR(75), -- Responsable
+	@NombreRol			VARCHAR(50),
+	@NuevoNombreRol		VARCHAR(50) = NULL,
+	@NuevoEstado		BIT = NULL
+AS
+BEGIN
+	
+	SET NOCOUNT ON;
+
+	DECLARE @Persona_ID INT;
+	SET @NombreRol = TRIM(ISNULL(@NombreRol, ''));
+
+	BEGIN TRY
+
+		BEGIN TRANSACTION;
+
+		-- VALIDACIÓN DE PERMISO Y OBTENER ID
+		SELECT @Persona_ID = S.SESION_PER_ID
+		FROM DBO.SESIONES_TB S
+		INNER JOIN DBO.ROLES_TB R
+			ON S.SESION_ROL_ID = R.ROL_ID
+		WHERE S.SESION_NombreUsuario = @NombreUsuario
+			AND S.SESION_Estado = 1
+			AND R.ROL_Nombre = 'Administrador';
+
+		IF @Persona_ID IS NULL
+		BEGIN
+			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+			ROLLBACK;
+			RETURN;
+		END;
+
+		IF NOT EXISTS (
+			SELECT 1
+			FROM DBO.ROLES_TB
+			WHERE ROL_Nombre = @NombreRol
+		)
+		BEGIN
+			RAISERROR('Error: El rol [%s] no existe.', 16, 1, @NombreRol);
+			ROLLBACK;
+			RETURN;
+		END
+
+		-- Guarda Persona ID
+		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID; 
+
+		IF (@NuevoNombreRol IS NOT NULL AND LEN(TRIM(@NuevoNombreRol)) > 0) OR @NuevoEstado IS NOT NULL
+		BEGIN
+			UPDATE DBO.ROLES_TB
+			SET	ROL_Nombre = ISNULL(TRIM(@NuevoNombreRol), ROL_Nombre),
+				ROL_Estado = ISNULL(@NuevoEstado, ROL_Estado)
+			WHERE ROL_Nombre = @NombreRol;
+		END
+
+		COMMIT;
+
+	END TRY
+	BEGIN CATCH
+		
+		IF @@TRANCOUNT > 0 ROLLBACK;
+
+		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+		DECLARE @ErrorState INT = ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+	END CATCH
+END;
+GO
+
+EXEC CONSULTAR_AUDITORIAS_SP
+	@NombreUsuario = 'AskingMansOz'
+
+-- CREATE OR ALTER PROCEDURE 
 
 /*
 	SP's XStore
@@ -271,7 +351,7 @@ GO
 
 	X CONSULTAR_ROLES_SP (Select simple Roles)
 	X REGISTRAR_ROL_SP (Insert a Roles)
-	MODIFICAR_ROL_SP (Update a Roles) 
+	X MODIFICAR_ROL_SP (Update a Roles) 
 
 	CONSULTAR_UBICACIONES_SP (Select simple nombre)
 	REGISTRAR_UBICACION_SP (Insert UBI_INVENTARIOS)

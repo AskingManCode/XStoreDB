@@ -30,7 +30,7 @@ BEGIN
 END;
 GO
 
--- No probado aún --
+
 CREATE OR ALTER TRIGGER DBO.REGISTRAR_ROL_TRG
 ON DBO.ROLES_TB
 FOR INSERT
@@ -40,17 +40,61 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @Persona_ID INT = CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
-    DECLARE @Rol_ID INT = (SELECT ROL_ID FROM INSERTED);
-    
-    IF @Persona_ID IS NULL -- INSERT MANUAL
-        SET @Persona_ID = 1; -- El sistema
 
+    IF @Persona_ID IS NULL 
+        SET @Persona_ID = 1; -- El sistema
+ 
+    DECLARE @Rol_ID INT = (SELECT ROL_ID FROM INSERTED);
+    DECLARE @DescripcionX VARCHAR(250) = 'Se usó REGISTRAR_ROL_SP y REGISTRAR_ROL_TRG. (Rol registrado: ' + (SELECT ROL_Nombre From INSERTED) + ')';
+    
     EXEC REGISTRAR_AUDITORIA_SP
 	    @Persona_ID = @Persona_ID,
 	    @Accion = 'INSERT',
 	    @TablaAfectada = 'ROLES_TB',
 	    @FilaAfectada = @Rol_ID,
-	    @Descripcion = 'Se usó INSERT_ROL_SP y INSERT_ROL_TRG.'
+	    @Descripcion = @DescripcionX; 
 
 END;
 GO
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_ROL_TRG
+ON DBO.ROLES_TB
+FOR UPDATE
+AS
+BEGIN
+    
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT = CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+
+    IF @Persona_ID IS NULL 
+        SET @Persona_ID = 1; -- El sistema
+
+    DECLARE @ROL_ID INT;
+    DECLARE @ROL_Nombre_Nuevo VARCHAR(50);
+    DECLARE @ROL_Estado_Nuevo BIT;
+    DECLARE @ROL_Nombre_Viejo VARCHAR(50) = (SELECT ROL_Nombre FROM DELETED);
+    DECLARE @ROL_Estado_Viejo BIT = (SELECT ROL_Estado FROM DELETED);
+    DECLARE @DESCRIPCIONX VARCHAR(250);
+
+    SELECT 
+        @ROL_ID = ROL_ID,
+        @ROL_Nombre_Nuevo = ROL_Nombre,
+        @ROL_Estado_Nuevo = ROL_Estado
+    FROM INSERTED;
+
+    SET @DescripcionX = 'Se usó MODIFICAR_ROL_SP y MODIFICAR_ROL_TRG. +' + 
+                    '(Rol antes: [ Nombre: ' + (SELECT ROL_Nombre FROM DELETED) + ' | Estado: ' + (SELECT CAST(ROL_Estado AS VARCHAR) FROM DELETED) + ' ] ' + 
+                    '-> Rol después: [ Nombre: ' + @ROL_Nombre_Nuevo + ' | Estado: ' + CAST(@ROL_Estado_Nuevo AS VARCHAR) + ' ])';
+
+    EXEC REGISTRAR_AUDITORIA_SP
+        @Persona_ID = @Persona_ID,
+        @Accion = 'UPDATE',
+        @TablaAfectada = 'ROLES_TB',
+        @FilaAfectada = @Rol_ID,
+        @Descripcion = @DescripcionX
+
+END;
+GO
+
