@@ -43,7 +43,7 @@ BEGIN
 			WHERE PER_ID = @Persona_ID
 		)
 		BEGIN
-			RAISERROR('Persona_ID [%d] no existe para auditoría.', 16, 1, @Persona_ID);
+			RAISERROR('Persona_ID no existe para auditoría.', 16, 1);
 		END
 		
 		IF @Accion NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
@@ -154,8 +154,8 @@ BEGIN
 			, A.AUD_TablaAfectada AS [Tabla Afectada]
 			, A.AUD_FilaAfectada AS [Fila Afectada]
 			, A.AUD_Descripcion AS [Descripción]
-			, A.AUD_Antes AS [Antes]
-			, A.AUD_Despues AS [Después]
+			, COALESCE(A.AUD_Antes, 'N/A') AS [Antes]
+			, COALESCE(A.AUD_Despues, 'N/A') AS [Después]
 			, A.AUD_FechaHora AS [Fecha y Hora]
 		FROM DBO.AUDITORIAS_TB A
 		INNER JOIN DBO.PERSONAS_TB P
@@ -164,15 +164,20 @@ BEGIN
 				OR CAST(A.AUD_FechaHora AS DATE) = @FechaFiltro) AND
 				(@TablaFiltro IS NULL OR A.AUD_TablaAfectada = UPPER(TRIM(@TablaFiltro)))
 		ORDER BY A.AUD_FechaHora DESC; -- Fechas recientes primero
-
-		EXEC REGISTRAR_AUDITORIA_SP
-			@Persona_ID = @Persona_ID,
-			@Accion = 'SELECT',
-			@TablaAfectada = 'AUDITORIAS_TB',
-			@FilaAfectada = 0,
-			@Descripcion = 'Se usó CONSULTAR_AUDITORIAS_SP.',
-			@Antes = NULL,
-			@Despues = NULL
+		
+		BEGIN TRY
+			EXEC REGISTRAR_AUDITORIA_SP
+				@Persona_ID = @Persona_ID,
+				@Accion = 'SELECT',
+				@TablaAfectada = 'AUDITORIAS_TB',
+				@FilaAfectada = 0,
+				@Descripcion = 'Se usó CONSULTAR_AUDITORIAS_SP.',
+				@Antes = NULL,
+				@Despues = NULL
+		END TRY
+		BEGIN CATCH
+			-- Vacío para que no se interrumpa la consulta
+		END CATCH
 
 	END TRY
 	BEGIN CATCH
@@ -218,14 +223,19 @@ BEGIN
 			, ROL_Estado AS [Estado Rol]
 		FROM DBO.ROLES_TB;
 
-		EXEC REGISTRAR_AUDITORIA_SP
-			@Persona_ID = @Persona_ID,
-			@Accion = 'SELECT',
-			@TablaAfectada = 'ROLES_TB',
-			@FilaAfectada = 0,
-			@Descripcion = 'Se usó CONSULTAR_ROLES_SP.',
-			@Antes = NULL,
-			@Despues = NULL
+		BEGIN TRY
+			EXEC REGISTRAR_AUDITORIA_SP
+				@Persona_ID = @Persona_ID,
+				@Accion = 'SELECT',
+				@TablaAfectada = 'ROLES_TB',
+				@FilaAfectada = 0,
+				@Descripcion = 'Se usó CONSULTAR_ROLES_SP.',
+				@Antes = NULL,
+				@Despues = NULL
+			END TRY
+		BEGIN CATCH
+			-- Vacío para que no se interrumpa la consulta
+		END CATCH
 
 	END TRY
 	BEGIN CATCH
@@ -307,15 +317,18 @@ BEGIN
 		INSERT INTO ROLES_TB (ROL_Nombre, ROL_Accesos)
 		VALUES (@Nombre, @Accesos);
 
+		COMMIT;
+
 		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
 		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , NULL;
-
-		COMMIT;
 
 	END TRY
 	BEGIN CATCH
 		
 		IF @@TRANCOUNT > 0 ROLLBACK;
+
+		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , NULL;
 
 		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
 		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
@@ -331,7 +344,7 @@ GO
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_ROL_SP
 	@NombreUsuario		VARCHAR(75), -- Responsable
-	@Nombre		VARCHAR(50),
+	@Nombre				VARCHAR(50),
 	@NuevoNombre		VARCHAR(50) = NULL,
 	@NuevosAccesos		VARCHAR(500) = NULL,
 	@NuevoEstado		BIT = NULL
@@ -342,6 +355,7 @@ BEGIN
 	SET NOCOUNT ON;
 
 	DECLARE @Persona_ID INT;
+	DECLARE @ROL_ID INT; 
 	SET @Nombre = TRIM(ISNULL(@Nombre, ''));
 	SET @NuevosAccesos = TRIM(ISNULL(@NuevosAccesos, ''));
 
@@ -365,13 +379,13 @@ BEGIN
 			RETURN;
 		END;
 
-		IF NOT EXISTS (
-			SELECT 1
-			FROM DBO.ROLES_TB
-			WHERE ROL_Nombre = @Nombre
-		)
+		SELECT @Rol_ID = ROL_ID
+		FROM DBO.ROLES_TB
+		WHERE ROL_Nombre = @Nombre;
+
+		IF @Rol_ID IS NULL
 		BEGIN
-			RAISERROR('Error: El rol [%s] no existe.', 16, 1, @Nombre);
+			RAISERROR('Error: El rol no existe.', 16, 1);
 			ROLLBACK;
 			RETURN;
 		END
@@ -382,7 +396,7 @@ BEGIN
 				SELECT 1 
 				FROM DBO.ROLES_TB 
 				WHERE ROL_Nombre = TRIM(@NuevoNombre) 
-				  AND ROL_Nombre != TRIM(@Nombre) -- La clave es esta exclusión
+				  AND ROL_ID != @Rol_ID
 			)
 			BEGIN
 				RAISERROR('Error: Ya existe eL rol [%s].', 16, 1, @NuevoNombre);
@@ -393,7 +407,7 @@ BEGIN
 
 		-- Guarda Persona ID
 		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , 'MODIFICAR_ROL_SP'
+		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', 'MODIFICAR_ROL_SP'
 
 		IF (@NuevoNombre IS NOT NULL AND LEN(TRIM(@NuevoNombre)) > 0)
 			OR (@NuevosAccesos IS NOT NULL AND LEN(TRIM(@NuevosAccesos)) > 0)
@@ -403,18 +417,21 @@ BEGIN
 			SET	ROL_Nombre = ISNULL(NULLIF(TRIM(@NuevoNombre), ''), ROL_Nombre),
 				ROL_Accesos = ISNULL(NULLIF(TRIM(@NuevosAccesos), ''), ROL_Accesos),
 				ROL_Estado = ISNULL(@NuevoEstado, ROL_Estado)
-			WHERE ROL_Nombre = TRIM(@Nombre);
+			WHERE ROL_ID = @ROL_ID;
 		END
+
+		COMMIT;
 
 		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
 		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , NULL;
-
-		COMMIT;
 
 	END TRY
 	BEGIN CATCH
 		
 		IF @@TRANCOUNT > 0 ROLLBACK;
+
+		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , NULL;
 
 		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
 		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
@@ -427,13 +444,115 @@ END;
 GO
 
 
-ALTER OR CREATE PROCEDURE DBO.CONSULTAR_TIPOS_PRODUCTOS_SP
-	@NombreUsuario		VARCHAR(75), -- Responsable
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_SESION_SP
+	@CreadorCuenta		VARCHAR(75) = NULL, -- Responsable (NulL por si lo crea el mismo usuario, de otra forma lo crea un administrador)
+	@Persona_ID					INT,
+	@NombreUsuario		VARCHAR(75),
+	@PasswordHash		VARCHAR(255),
+	@NombreRol			VARCHAR(50)
 AS
 BEGIN
 	
+	SET XACT_ABORT ON;
+	SET NOCOUNT ON;
+
+	DECLARE @CreadorCuenta_ID INT;
+	DECLARE @Rol_ID INT;
+	SET @NombreUsuario = TRIM(ISNULL(@NombreUsuario, ''));
+	SET @NombreRol = TRIM(ISNULL(@NombreRol, ''));
+
+	BEGIN TRY
+
+		BEGIN TRANSACTION;
+
+		IF @CreadorCuenta IS NULL
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1
+				FROM DBO.PERSONAS_TB
+				WHERE PER_ID = @Persona_ID
+					AND PER_ID != 1 -- SISTEMA
+					AND PER_Estado = 1
+			)
+			BEGIN
+				RAISERROR('Persona_ID no válido.', 16, 1);
+			END
+
+			SET @CreadorCuenta_ID = @Persona_ID; -- La persona se Crea a sí misma
+		END
+		ELSE 
+		BEGIN
+			SELECT @CreadorCuenta_ID = S.SESION_PER_ID
+			FROM DBO.SESIONES_TB S
+			INNER JOIN DBO.ROLES_TB R
+				ON S.SESION_ROL_ID = R.ROL_ID
+			WHERE S.SESION_NombreUsuario = @CreadorCuenta
+				AND S.SESION_Estado = 1
+				AND R.ROL_Nombre = 'Administrador'
+
+			IF @CreadorCuenta_ID IS NULL
+			BEGIN 
+				RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @CreadorCuenta)
+			END
+		END;
+
+		IF EXISTS(
+			SELECT 1
+			FROM DBO.SESIONES_TB
+			WHERE SESION_NombreUsuario = @NombreUsuario
+		)
+		BEGIN
+			RAISERROR('Error: El nombre de usuario [%s] ya está registrado.', 16, 1, @NombreUsuario);
+		END;
+
+		IF LEN(@NombreUsuario) < 1
+		BEGIN
+			RAISERROR('El nombre de usuario es demasiado corto.', 16, 1);
+		END
+
+		IF LEN(@PasswordHash) < 1
+		BEGIN
+			RAISERROR('El Hash de la contraseña no es válido.', 16, 1);
+		END
+
+		SELECT @Rol_ID = ROL_ID
+		FROM DBO.ROLES_TB
+		WHERE ROL_Nombre = @NombreRol
+
+		IF @Rol_ID IS NULL
+		BEGIN
+			RAISERROR('Error: El rol [%s] no existe.', 16, 1, @NombreRol);
+		END
+
+		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @CreadorCuenta_ID;
+		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', 'REGISTRAR_SESION_SP';
+
+		INSERT INTO DBO.SESIONES_TB (SESION_PER_ID, SESION_NombreUsuario, SESION_PwdHash, SESION_ROL_ID)
+		VALUES (@Persona_ID, @NombreUsuario, @PasswordHash, @Rol_ID);
+
+		COMMIT;
+
+		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', NULL;
+
+	END TRY
+	BEGIN CATCH
+
+		IF @@TRANCOUNT > 0 ROLLBACK;
+
+		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', NULL;
+
+		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+		DECLARE @ErrorState INT = ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+	END CATCH
 END;
 GO
+
 
 EXEC REGISTRAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -507,7 +626,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios)
 	QUITAR_DESCUENTO_PRODUCTO_SP (Se aplica un null a la referencia del descuento que tenía antes)
 
-	CREAR_CUENTA_SP
+	REGISTRAR_SESION_SP
 	VERIFICAR_SESION_SP (Devuelve el nombre de Usuario para mostrarlo en la información de cuenta, sino, error, verifica que el usuario exista)
 	MODIFICAR_SESION_SP (Cambia contraseña si se cambia o nombre de usuario, Recordar NombreUsuario es UNIQUE)
 

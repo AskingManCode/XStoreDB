@@ -52,6 +52,12 @@ VALUES (
     'Administrador', 'Pantalla_Menú, Pantalla_Editar_Productos, Pantalla_CRUD_Usuarios'
 );
 
+EXEC REGISTRAR_SESION_SP
+	@Persona_ID = 2,
+	@NombreUsuario = 'AskingMansOz',
+	@PasswordHash = '1234',
+	@NombreRol = 'Administrador'
+
 INSERT INTO DBO.SESIONES_TB (
     SESION_PER_ID,
     SESION_NombreUsuario,
@@ -70,3 +76,6 @@ FROM DBO.PERSONAS_TB;
 
 SELECT * 
 FROM DBO.ROLES_TB
+
+select *
+from SESIONES_TB

@@ -10,7 +10,7 @@ USE XSTORE;
 GO
 
 ---- ****** TRIGGERS ****** ----
-CREATE OR ALTER TRIGGER DBO.BLOQUEAR_AUDITORIA_TRG
+CREATE OR ALTER TRIGGER DBO.BLOQUEAR_AUDITORIA_TR
 ON DBO.AUDITORIAS_TB
 INSTEAD OF UPDATE, DELETE 
 AS
@@ -33,7 +33,7 @@ END;
 GO
 
 
-CREATE OR ALTER TRIGGER DBO.REGISTRAR_ROL_TRG
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_ROL_TR
 ON DBO.ROLES_TB
 FOR INSERT
 AS
@@ -47,7 +47,7 @@ BEGIN
     IF @Persona_ID IS NULL 
         SET @Persona_ID = 1; -- El sistema
 
-    INSERT INTO AUDITORIAS_TB(
+    INSERT INTO DBO.AUDITORIAS_TB(
         AUD_PER_ID,
         AUD_Accion,
         AUD_TablaAfectada,
@@ -63,19 +63,19 @@ BEGIN
         I.ROL_ID,
         CASE 
             WHEN @Origen IS NOT NULL
-                THEN 'Se usó ' + @Origen + ' y REGISTRAR_ROL_TRG.'
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_ROL_TR.'
             ELSE 
-                'Se usó REGISTRAR_ROL_TRG.'
+                'Se usó REGISTRAR_ROL_TR.'
         END,
         NULL,
-        '[ Nombre: ' + I.ROL_Nombre + ' | Accesos: ' + I.ROL_Accesos + ' | Estado: ' + CAST(I.ROL_ESTADO AS VARCHAR) + ' ]'
+        '[ Nombre: ' + I.ROL_Nombre + ' | Accesos: ' + I.ROL_Accesos + ' | Estado: ' + CASE WHEN I.ROL_ESTADO = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
     FROM INSERTED I
 END;
 GO
 
 
 
-CREATE OR ALTER TRIGGER DBO.MODIFICAR_ROL_TRG
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_ROL_TR
 ON DBO.ROLES_TB
 FOR UPDATE
 AS
@@ -89,7 +89,7 @@ BEGIN
     IF @Persona_ID IS NULL 
         SET @Persona_ID = 1; -- El sistema
 
-    INSERT INTO AUDITORIAS_TB(
+    INSERT INTO DBO.AUDITORIAS_TB(
         AUD_PER_ID,
         AUD_Accion,
         AUD_TablaAfectada,
@@ -105,14 +105,61 @@ BEGIN
         I.ROL_ID,
         CASE 
             WHEN @Origen IS NOT NULL
-                THEN 'Se usó ' + @Origen + ' y MODIFICAR_ROL_TRG.'
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_ROL_TR.'
             ELSE 
-                'Se usó MODIFICAR_ROL_TRG.'
+                'Se usó MODIFICAR_ROL_TR.'
         END,
-        '[ Nombre: ' + D.ROL_Nombre + ' | Accesos: ' + D.ROL_Accesos + ' | Estado: ' + CAST(D.ROL_Estado AS VARCHAR) + ' ]',
-        '[ Nombre: ' + I.ROL_Nombre + ' | Accesos: ' + I.ROL_Accesos + ' | Estado: ' + CAST(I.ROL_Estado AS VARCHAR) + ' ]'
+        '[ Nombre: ' + D.ROL_Nombre + ' | Accesos: ' + D.ROL_Accesos + ' | Estado: ' + CASE WHEN D.ROL_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + I.ROL_Nombre + ' | Accesos: ' + I.ROL_Accesos + ' | Estado: ' + CASE WHEN I.ROL_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
     FROM DELETED D
     INNER JOIN INSERTED I
         ON D.ROL_ID = I.ROL_ID;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_SESION_TR
+ON DBO.SESIONES_TB
+FOR INSERT
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT = CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen VARCHAR(75) = CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR);
+
+    IF @Persona_ID IS NULL 
+        SET @Persona_ID = 1; -- El sistema
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT 
+        @Persona_ID,
+        'INSERT',
+        'SESIONES_TB',
+        I.SESION_ID,
+        CASE 
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_SESION_TR.'
+            ELSE
+                'Se usó REGISTRAR_SESION_TR.'
+        END,
+        NULL,
+        '[ Persona: ' + P.PER_NombreCompleto + ' | Usuario: ' + I.SESION_NombreUsuario + ' | Contraseña: ****' + 
+        ' | Rol: ' + R.ROL_Nombre + ' | Estado: ' + CASE WHEN I.SESION_Estado = 1 THEN 'Activo' Else 'Inactivo' END + ' ]'
+    FROM INSERTED I
+    INNER JOIN PERSONAS_TB P
+        ON I.SESION_PER_ID = P.PER_ID
+    INNER JOIN ROLES_TB R
+        ON I.SESION_ROL_ID = R.ROL_ID
 END;
 GO
