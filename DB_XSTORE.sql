@@ -134,6 +134,7 @@ END
 GO
 
 
+
 IF OBJECT_ID('DBO.AUDITORIAS_TB', 'U') IS NULL
 BEGIN
     CREATE TABLE DBO.AUDITORIAS_TB( 
@@ -143,6 +144,12 @@ BEGIN
 	    AUD_TablaAfectada VARCHAR(75) NOT NULL, -- Nombre tabla afectada
 	    AUD_FilaAfectada BIGINT NOT NULL,       -- ID de la fila afectada
 	    AUD_Descripcion VARCHAR(250) NOT NULL,  -- Descripción auditable
+        AUD_Antes VARCHAR(1000) NULL
+            CONSTRAINT DF_AUD_Antes
+                DEFAULT (NULL), 
+        AUD_Despues VARCHAR(1000) NULL
+            CONSTRAINT DF_AUD_Despues
+                DEFAULT (NULL),
 	    AUD_FechaHora DATETIME2 NOT NULL
             CONSTRAINT DF_AUD_FechaHora
                 DEFAULT(SYSDATETIME()),
@@ -186,8 +193,9 @@ IF OBJECT_ID('DBO.ROLES_TB', 'U') IS NULL
 BEGIN
     CREATE TABLE DBO.ROLES_TB(
 	    ROL_ID INT IDENTITY(1,1), -- PK
-        ROL_Nombre VARCHAR(50) NOT NULL, -- Sistema, Administrador, Vendedor, Cliente
-        ROL_Estado BIT NOT NULL
+        ROL_Nombre VARCHAR(50) NOT NULL, -- Sistema, Administrador, Vendedor, Cliente, 
+        ROL_Accesos VARCHAR(500) NOT NULL, -- Pantallas a las que accede el rol
+        ROL_Estado BIT NOT NULL 
             CONSTRAINT DF_ROL_Estado
                 DEFAULT (1),
 
@@ -203,6 +211,12 @@ BEGIN
                     AND ROL_Nombre NOT LIKE ' %'
                     AND ROL_Nombre NOT LIKE '% '
                     AND ROL_Nombre NOT LIKE '%  %'),
+
+        CONSTRAINT CK_ROL_Accesos
+            CHECK ((LEN(TRIM(ROL_Accesos)) > 0)
+                    AND ROL_Accesos NOT LIKE ' %'
+                    AND ROL_Accesos NOT LIKE '% '
+                    AND ROL_Accesos NOT LIKE '%  %'),
 
         -- UNIQUES
 
