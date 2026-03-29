@@ -58,24 +58,11 @@ EXEC REGISTRAR_SESION_SP
 	@PasswordHash = '1234',
 	@NombreRol = 'Administrador'
 
-INSERT INTO DBO.SESIONES_TB (
-    SESION_PER_ID,
-    SESION_NombreUsuario,
-    SESION_PwdHash,
-    SESION_ROL_ID
-)
-VALUES (
-    2,
-    'AskingMansOz',
-    '1234',
-    1
-);
-
 SELECT *
 FROM DBO.PERSONAS_TB;
 
 SELECT * 
 FROM DBO.ROLES_TB
 
-select *
-from SESIONES_TB
+SELECT *
+FROM SESIONES_TB

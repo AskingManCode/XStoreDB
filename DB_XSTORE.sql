@@ -271,7 +271,10 @@ BEGIN
         -- UNIQUES
 
         CONSTRAINT UQ_SESION_NombreUsuario
-            UNIQUE (SESION_NombreUsuario)
+            UNIQUE (SESION_NombreUsuario),
+
+        CONSTRAINT UQ_SESION_ROL
+            UNIQUE (SESION_PER_ID, SESION_ROL_ID)
     ); 
 END
 GO

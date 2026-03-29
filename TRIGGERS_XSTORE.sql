@@ -15,7 +15,7 @@ ON DBO.AUDITORIAS_TB
 INSTEAD OF UPDATE, DELETE 
 AS
 BEGIN
-
+ 
     SET NOCOUNT ON;
     
     DECLARE @Accion NVARCHAR(10) = '';
@@ -24,11 +24,11 @@ BEGIN
         SET @Accion = 'UPDATE';
     ELSE
         SET @Accion = 'DELETE';
-
+ 
     ROLLBACK TRANSACTION; 
-
+ 
     RAISERROR ('SEGURIDAD: La tabla de Auditoría es INMUTABLE. No se permite [%s].', 16, 1, @Accion);
-
+ 
 END;
 GO
 
@@ -41,11 +41,14 @@ BEGIN
 
     SET NOCOUNT ON;
 
-    DECLARE @Persona_ID INT = CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
-    DECLARE @Origen VARCHAR(75) = CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR);
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
 
     IF @Persona_ID IS NULL 
-        SET @Persona_ID = 1; -- El sistema
+        SET @Persona_ID = 1; -- Fallback al sistema si no hay context
+
+    IF @Origen IS NULL
+        SET @Origen = 'Procedimiento Almacenado';
 
     INSERT INTO DBO.AUDITORIAS_TB(
         AUD_PER_ID,
@@ -83,11 +86,14 @@ BEGIN
     
     SET NOCOUNT ON;
 
-    DECLARE @Persona_ID INT = CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
-    DECLARE @Origen VARCHAR(75) = CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR);
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
 
     IF @Persona_ID IS NULL 
-        SET @Persona_ID = 1; -- El sistema
+        SET @Persona_ID = 1; -- Fallback al sistema si no hay context
+
+    IF @Origen IS NULL
+        SET @Origen = 'Procedimiento Almacenado';
 
     INSERT INTO DBO.AUDITORIAS_TB(
         AUD_PER_ID,
@@ -127,11 +133,14 @@ BEGIN
 
     SET NOCOUNT ON;
 
-    DECLARE @Persona_ID INT = CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
-    DECLARE @Origen VARCHAR(75) = CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR);
-
+    DECLARE @Persona_ID INT     = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
     IF @Persona_ID IS NULL 
-        SET @Persona_ID = 1; -- El sistema
+        SET @Persona_ID = 1; -- Fallback al sistema si no hay contexto
+
+    IF @Origen IS NULL
+        SET @Origen = 'Procedimiento Almacenado';
 
     INSERT INTO DBO.AUDITORIAS_TB (
         AUD_PER_ID,

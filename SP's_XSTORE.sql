@@ -16,100 +16,111 @@ GO
 
 ---- ****** PROCEDIMIENTOS ALMACENADOS ****** ----
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_AUDITORIA_SP
-	@Persona_ID			INT, -- ID de la Persona Responsable
-	@Accion				VARCHAR(25),
-	@TablaAfectada		VARCHAR(75),
-	@FilaAfectada		BIGINT,
-	@Descripcion		VARCHAR(250),
-	@Antes				VARCHAR(1000),
-	@Despues			VARCHAR(1000)
+	@Persona_ID		INT, -- ID de la Persona Responsable
+	@Accion			VARCHAR(25),
+	@TablaAfectada	VARCHAR(75),
+	@FilaAfectada	BIGINT,
+	@Descripcion	VARCHAR(250),
+	@Antes			VARCHAR(1000),
+	@Despues		VARCHAR(1000)
 AS
 BEGIN
 	
 	SET NOCOUNT ON;
-	SET XACT_ABORT ON; -- Aborta si hay error de ejecución
 
 	BEGIN TRY
 		
 		-- NORMALIZACIÓN
-		SET @Accion = UPPER(TRIM(ISNULL(@Accion, '')));
-		SET @TablaAfectada = UPPER(TRIM(ISNULL(@TablaAfectada, '')));
-		SET @Descripcion = TRIM(ISNULL(@Descripcion, ''));
+		SET @Accion			= UPPER(TRIM(ISNULL(@Accion, '')));
+		SET @TablaAfectada	= UPPER(TRIM(ISNULL(@TablaAfectada, '')));
+		SET @Descripcion	= TRIM(ISNULL(@Descripcion, ''));
 
-		-- VALIDACIONES
-		IF NOT EXISTS(
-			SELECT 1
-			FROM DBO.PERSONAS_TB
+        -- VALIDACIONES
+        IF NOT EXISTS (
+            SELECT 1 
+			FROM DBO.PERSONAS_TB 
 			WHERE PER_ID = @Persona_ID
-		)
-		BEGIN
-			RAISERROR('Persona_ID no existe para auditoría.', 16, 1);
-		END
+        )
+        BEGIN
+            RAISERROR('Persona_ID no existe para auditoría.', 16, 1);
+            RETURN;
+        END
 		
 		IF @Accion NOT IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
-		BEGIN
-			RAISERROR('Acción [%s] no válida para auditoría.', 16, 1, @Accion);
-		END
+        BEGIN
+            RAISERROR('Acción [%s] no válida para auditoría.', 16, 1, @Accion);
+            RETURN;
+        END
 
 		IF LEN(@TablaAfectada) < 1
-		BEGIN
-			RAISERROR('Tabla no válida para auditoría', 16, 1)
-		END
+        BEGIN
+            RAISERROR('Tabla no válida para auditoría.', 16, 1);
+            RETURN;
+        END
 
 		-- SELECT siempre debe tener 0 filas afectadas
-		IF (@Accion = 'SELECT' AND @FilaAfectada != 0)
-		BEGIN
-			RAISERROR('ID de fila afectada no válido para auditoría.', 16, 1);
-		END
+        IF @Accion = 'SELECT' AND @FilaAfectada != 0
+        BEGIN
+            RAISERROR('En SELECT, FilaAfectada debe ser 0.', 16, 1);
+            RETURN;
+        END
 
 		-- Todo lo que no sea SELECT debe tener más de 0 filas afectadas
-		IF @Accion != 'SELECT' AND @FilaAfectada <= 0
-		BEGIN
-			RAISERROR('ID de fila afectada no válido para auditoría.', 16, 1);
-		END
+        IF @Accion != 'SELECT' AND @FilaAfectada <= 0
+        BEGIN
+            RAISERROR('ID de fila afectada no válido para auditoría.', 16, 1);
+            RETURN;
+        END
 
 		-- Regla para SELECT: Ambos deben ser NULL
-		IF @Accion = 'SELECT' AND (@Antes IS NOT NULL OR @Despues IS NOT NULL)
-		BEGIN
-			RAISERROR('En SELECT, los campos Antes/Después deben ser NULL.', 16, 1);
-		END
+        IF @Accion = 'SELECT' AND (@Antes IS NOT NULL OR @Despues IS NOT NULL)
+        BEGIN
+            RAISERROR('En SELECT, los campos Antes/Después deben ser NULL.', 16, 1);
+            RETURN;
+        END
 
 		-- Regla para INSERT: Antes NULL, Después con datos
-		IF @Accion = 'INSERT' AND (@Antes IS NOT NULL OR @Despues IS NULL)
-		BEGIN
-			RAISERROR('En INSERT, "Antes" debe ser NULL y "Después" debe tener datos.', 16, 1);
-		END
+        IF @Accion = 'INSERT' AND (@Antes IS NOT NULL OR @Despues IS NULL)
+        BEGIN
+            RAISERROR('En INSERT, "Antes" debe ser NULL y "Después" debe tener datos.', 16, 1);
+            RETURN;
+        END
 
 		-- Regla para UPDATE: Ambos deben tener datos
-		IF @Accion = 'UPDATE' AND (@Antes IS NULL OR @Despues IS NULL)
-		BEGIN
-			RAISERROR('En UPDATE, se requieren ambos estados (Antes y Después).', 16, 1);
-		END
+        IF @Accion = 'UPDATE' AND (@Antes IS NULL OR @Despues IS NULL)
+        BEGIN
+            RAISERROR('En UPDATE, se requieren ambos estados (Antes y Después).', 16, 1);
+            RETURN;
+        END
 
 		-- Regla para DELETE: Antes con datos, Después NULL
-		IF @Accion = 'DELETE' AND (@Antes IS NULL OR @Despues IS NOT NULL)
-		BEGIN
-			RAISERROR('En DELETE, "Antes" debe tener datos y "Después" debe ser NULL.', 16, 1);
-		END
+        IF @Accion = 'DELETE' AND (@Antes IS NULL OR @Despues IS NOT NULL)
+        BEGIN
+            RAISERROR('En DELETE, "Antes" debe tener datos y "Después" debe ser NULL.', 16, 1);
+            RETURN;
+        END
 
-		IF LEN(@Descripcion) <= 10
-		BEGIN
-			RAISERROR('La descripción para la auditoría es muy corta.', 16, 10);
-		END
+        IF LEN(@Descripcion) <= 10
+        BEGIN
+            RAISERROR('La descripción para la auditoría debe tener mínimo 11 caracteres.', 16, 10);
+            RETURN;
+        END
 
-		INSERT INTO DBO.AUDITORIAS_TB(
-			AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada, AUD_Descripcion, AUD_Antes, AUD_Despues
-		)
-		VALUES (
-			@Persona_ID, @Accion, @TablaAfectada, @FilaAfectada, @Descripcion, @Antes, @Despues
-		);
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada,
+            AUD_Descripcion, AUD_Antes, AUD_Despues
+        )
+        VALUES (
+            @Persona_ID, @Accion, @TablaAfectada, @FilaAfectada,
+            @Descripcion, @Antes, @Despues
+        );
 
 	END TRY
 	BEGIN CATCH
 		
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-		DECLARE @ErrorState INT = ERROR_STATE();
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
 
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
 
@@ -120,20 +131,20 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_AUDITORIAS_SP
-	@NombreUsuario		VARCHAR(75), -- Responsable 
-	@FechaFiltro		DATE = NULL,
-	@TablaFiltro		VARCHAR(75) = NULL	
+	@NombreUsuario	VARCHAR(75),    -- Responsable 
+	@FechaFiltro	DATE			= NULL,
+	@TablaFiltro	VARCHAR(75)		= NULL	
 AS
 BEGIN
 
 	SET NOCOUNT ON;
-	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; -- Evita que se bloqueen otras tablas de alta transaccionalidad
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; -- Evita que se bloqueen otras tablas
 	
 	DECLARE @Persona_ID INT;
 
 	BEGIN TRY
 		
-		-- VALIDACIÓN DE PERMISO Y OBTENER ID
+		-- Validación de permisos y obtención de ID_Persona
 		SELECT @Persona_ID = S.SESION_PER_ID
 		FROM DBO.SESIONES_TB S
 		INNER JOIN DBO.ROLES_TB R
@@ -142,59 +153,60 @@ BEGIN
 			AND S.SESION_Estado = 1
 			AND R.ROL_Nombre = 'Administrador';
 
-		IF @Persona_ID IS NULL
-		BEGIN
-			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
-			RETURN;
-		END;
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
 
-		SELECT 
-			P.PER_NombreCompleto AS [Responsable]
-			, A.AUD_Accion AS [Acción]
-			, A.AUD_TablaAfectada AS [Tabla Afectada]
-			, A.AUD_FilaAfectada AS [Fila Afectada]
-			, A.AUD_Descripcion AS [Descripción]
-			, COALESCE(A.AUD_Antes, 'N/A') AS [Antes]
-			, COALESCE(A.AUD_Despues, 'N/A') AS [Después]
-			, A.AUD_FechaHora AS [Fecha y Hora]
-		FROM DBO.AUDITORIAS_TB A
-		INNER JOIN DBO.PERSONAS_TB P
-			ON A.AUD_PER_ID = P.PER_ID
-		WHERE (@FechaFiltro IS NULL 
-				OR CAST(A.AUD_FechaHora AS DATE) = @FechaFiltro) AND
-				(@TablaFiltro IS NULL OR A.AUD_TablaAfectada = UPPER(TRIM(@TablaFiltro)))
-		ORDER BY A.AUD_FechaHora DESC; -- Fechas recientes primero
+        SELECT 
+            P.PER_NombreCompleto AS [Responsable]
+            , A.AUD_Accion AS [Acción]
+            , A.AUD_TablaAfectada AS [Tabla Afectada]
+            , A.AUD_FilaAfectada AS [Fila Afectada]
+            , A.AUD_Descripcion AS [Descripción]
+            , COALESCE(A.AUD_Antes, 'N/A') AS [Antes]
+            , COALESCE(A.AUD_Despues, 'N/A') AS [Después]
+            , A.AUD_FechaHora AS [Fecha y Hora]
+        FROM DBO.AUDITORIAS_TB A
+        INNER JOIN DBO.PERSONAS_TB P
+            ON A.AUD_PER_ID = P.PER_ID
+        WHERE (@FechaFiltro IS NULL OR CAST(A.AUD_FechaHora AS DATE) = @FechaFiltro)
+            AND (@TablaFiltro IS NULL OR A.AUD_TablaAfectada = UPPER(TRIM(@TablaFiltro)))
+        ORDER BY A.AUD_FechaHora DESC; -- Fechas recientes primero
 		
 		BEGIN TRY
 			EXEC REGISTRAR_AUDITORIA_SP
-				@Persona_ID = @Persona_ID,
-				@Accion = 'SELECT',
-				@TablaAfectada = 'AUDITORIAS_TB',
-				@FilaAfectada = 0,
-				@Descripcion = 'Se usó CONSULTAR_AUDITORIAS_SP.',
-				@Antes = NULL,
-				@Despues = NULL
+				@Persona_ID		= @Persona_ID,
+				@Accion			= 'SELECT',
+				@TablaAfectada	= 'AUDITORIAS_TB',
+				@FilaAfectada	= 0,
+				@Descripcion	= 'Se usó CONSULTAR_AUDITORIAS_SP.',
+				@Antes			= NULL,
+				@Despues		= NULL
 		END TRY
 		BEGIN CATCH
-			-- Vacío para que no se interrumpa la consulta
+			-- Falla en auditoría no debe interrumpir la consulta
 		END CATCH
 
 	END TRY
 	BEGIN CATCH
 		
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-		DECLARE @ErrorState INT = ERROR_STATE();
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
 
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
 
 	END CATCH
+
+	SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 END;
 GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_ROLES_SP
-	@NombreUsuario		VARCHAR(75) -- Responsable
+	@NombreUsuario	VARCHAR(75) -- Responsable
 AS
 BEGIN
 
@@ -204,18 +216,18 @@ BEGIN
 
 	BEGIN TRY
 
-		SELECT @Persona_ID = S.SESION_PER_ID
-			FROM DBO.SESIONES_TB S
-			INNER JOIN DBO.ROLES_TB R
-				ON S.SESION_ROL_ID = R.ROL_ID
-			WHERE S.SESION_NombreUsuario = @NombreUsuario
-				AND S.SESION_Estado = 1;
-
-			IF @Persona_ID IS NULL
-			BEGIN
-				RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
-				RETURN;
-			END;
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
 
 		SELECT 
 			ROL_Nombre AS [Rol]
@@ -224,25 +236,25 @@ BEGIN
 		FROM DBO.ROLES_TB;
 
 		BEGIN TRY
-			EXEC REGISTRAR_AUDITORIA_SP
-				@Persona_ID = @Persona_ID,
-				@Accion = 'SELECT',
-				@TablaAfectada = 'ROLES_TB',
-				@FilaAfectada = 0,
-				@Descripcion = 'Se usó CONSULTAR_ROLES_SP.',
-				@Antes = NULL,
-				@Despues = NULL
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'ROLES_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_ROLES_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
 			END TRY
 		BEGIN CATCH
-			-- Vacío para que no se interrumpa la consulta
+			-- Falla en auditoría no debe interrumpir la consulta
 		END CATCH
 
 	END TRY
 	BEGIN CATCH
 
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-		DECLARE @ErrorState INT = ERROR_STATE();
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
 
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
 
@@ -252,9 +264,9 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_ROL_SP
-	@NombreUsuario		VARCHAR(75), -- Responsable
-	@Nombre				VARCHAR(50),
-	@Accesos			VARCHAR(500) -- Pantallas a las que puede acceder el rol
+	@NombreUsuario	VARCHAR(75), -- Responsable
+	@Nombre			VARCHAR(50),
+	@Accesos		VARCHAR(500) -- Pantallas a las que puede acceder el rol
 AS
 BEGIN
 	
@@ -262,7 +274,7 @@ BEGIN
 	SET NOCOUNT ON;
 
 	DECLARE @Persona_ID INT;
-	SET @Nombre = TRIM(ISNULL(@Nombre, ''))
+	SET @Nombre	 = TRIM(ISNULL(@Nombre, ''))
 	SET @Accesos = TRIM(ISNULL(@Accesos, ''))
 
 	BEGIN TRY
@@ -270,69 +282,65 @@ BEGIN
 		BEGIN TRANSACTION;
 
 		-- VALIDACIÓN DE PERMISO Y OBTENER ID
-		SELECT @Persona_ID = S.SESION_PER_ID
-		FROM DBO.SESIONES_TB S
-		INNER JOIN DBO.ROLES_TB R
-			ON S.SESION_ROL_ID = R.ROL_ID
-		WHERE S.SESION_NombreUsuario = @NombreUsuario
-			AND S.SESION_Estado = 1
-			AND R.ROL_Nombre = 'Administrador';
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
 
-		IF @Persona_ID IS NULL
-		BEGIN
-			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
-			ROLLBACK;
-			RETURN;
-		END;
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
 
-		IF LEN(@Nombre) <= 0
-		BEGIN
-			RAISERROR('Error: El rol no es válido.', 16, 1);
-			ROLLBACK;
-			RETURN;
-		END
+        IF LEN(@Nombre) <= 0
+        BEGIN
+            RAISERROR('Error: El nombre del rol no es válido.', 16, 1);
+            RETURN;
+        END
 
-		IF EXISTS (
-			SELECT 1 
+        IF EXISTS (
+            SELECT 1 
 			FROM DBO.ROLES_TB 
 			WHERE ROL_Nombre = @Nombre
-		)
-		BEGIN
-			RAISERROR('Error: El rol [%s] ya se encuentra registrado.', 16, 1, @Nombre);
-			ROLLBACK;
-			RETURN;
-		END
+        )
+        BEGIN
+            RAISERROR('Error: El rol [%s] ya se encuentra registrado.', 16, 1, @Nombre);
+            RETURN;
+        END
 
-		IF LEN(@Accesos) <= 0
-		BEGIN
-			RAISERROR('Error: Accesos no válidos.', 16, 1);
-			ROLLBACK;
-			RETURN;
-		END
+        IF LEN(@Accesos) <= 0
+        BEGIN
+            RAISERROR('Error: Los accesos no son válidos.', 16, 1);
+            RETURN;
+        END
 
 		-- Guarda Persona ID
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , 'REGISTRAR_ROL_SP';
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_ROL_SP';
 
 		INSERT INTO ROLES_TB (ROL_Nombre, ROL_Accesos)
 		VALUES (@Nombre, @Accesos);
 
-		COMMIT;
-
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , NULL;
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
 
 	END TRY
 	BEGIN CATCH
 		
 		IF @@TRANCOUNT > 0 ROLLBACK;
 
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
 
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-		DECLARE @ErrorState INT = ERROR_STATE();
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
 
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
 
@@ -343,82 +351,110 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_ROL_SP
-	@NombreUsuario		VARCHAR(75), -- Responsable
-	@Nombre				VARCHAR(50),
-	@NuevoNombre		VARCHAR(50) = NULL,
-	@NuevosAccesos		VARCHAR(500) = NULL,
-	@NuevoEstado		BIT = NULL
+    @NombreUsuario  VARCHAR(75),    -- Responsable
+    @Nombre         VARCHAR(50),    -- Nombre actual del rol a modificar
+    @NuevoNombre    VARCHAR(50)     = NULL,
+    @NuevosAccesos  VARCHAR(500)    = NULL,
+    @NuevoEstado    BIT             = NULL
 AS
 BEGIN
 	
-	SET XACT_ABORT ON;
-	SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID     INT;
+    DECLARE @Rol_ID         INT;
+    DECLARE @EsRolCritico   BIT = 0;
+ 
+    SET @Nombre        = TRIM(ISNULL(@Nombre, ''));
+    SET @NuevoNombre   = TRIM(ISNULL(@NuevoNombre, ''));
+    SET @NuevosAccesos = TRIM(ISNULL(@NuevosAccesos, ''));
 
-	DECLARE @Persona_ID INT;
-	DECLARE @ROL_ID INT; 
-	SET @Nombre = TRIM(ISNULL(@Nombre, ''));
-	SET @NuevosAccesos = TRIM(ISNULL(@NuevosAccesos, ''));
-
-	BEGIN TRY
-
+	BEGIN TRY 
+		
 		BEGIN TRANSACTION;
 
-		-- VALIDACIÓN DE PERMISO Y OBTENER ID
-		SELECT @Persona_ID = S.SESION_PER_ID
-		FROM DBO.SESIONES_TB S
-		INNER JOIN DBO.ROLES_TB R
-			ON S.SESION_ROL_ID = R.ROL_ID
-		WHERE S.SESION_NombreUsuario = @NombreUsuario
-			AND S.SESION_Estado = 1
-			AND R.ROL_Nombre = 'Administrador';
+		-- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R 
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
 
-		IF @Persona_ID IS NULL
-		BEGIN
-			RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
-			ROLLBACK;
-			RETURN;
-		END;
+		-- Obtener datos del rol a modificar
+        SELECT 
+            @Rol_ID = ROL_ID,
+            @EsRolCritico = CASE WHEN ROL_Nombre = 'Administrador' THEN 1 ELSE 0 END
+        FROM DBO.ROLES_TB
+        WHERE ROL_Nombre = @Nombre;
 
-		SELECT @Rol_ID = ROL_ID
-		FROM DBO.ROLES_TB
-		WHERE ROL_Nombre = @Nombre;
+        IF @Rol_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El rol [%s] no existe.', 16, 1, @Nombre);
+            RETURN;
+        END
+		
+		-- Protección de rol de administrador
+        IF @EsRolCritico = 1 AND (@NuevoEstado = 0 OR LEN(@NuevoNombre) > 0)
+        BEGIN
+            RAISERROR('No se permite renombrar o desactivar el rol Administrador por seguridad.', 16, 1);
+            RETURN;
+        END
 
-		IF @Rol_ID IS NULL
-		BEGIN
-			RAISERROR('Error: El rol no existe.', 16, 1);
-			ROLLBACK;
-			RETURN;
-		END
+        IF LEN(@NuevoNombre) = 0
+            AND LEN(@NuevosAccesos) = 0
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para el rol [%s].', 16, 1, @Nombre);
+            RETURN;
+        END
 
-		IF @NuevoNombre IS NOT NULL AND LEN(TRIM(@NuevoNombre)) > 0
-		BEGIN
-			IF EXISTS (
-				SELECT 1 
-				FROM DBO.ROLES_TB 
-				WHERE ROL_Nombre = TRIM(@NuevoNombre) 
-				  AND ROL_ID != @Rol_ID
-			)
-			BEGIN
-				RAISERROR('Error: Ya existe eL rol [%s].', 16, 1, @NuevoNombre);
-				ROLLBACK;
-				RETURN;
-			END
-		END
+        -- Validar nuevo nombre
+        IF LEN(@NuevoNombre) > 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1 
+                FROM DBO.ROLES_TB 
+                WHERE ROL_Nombre = @NuevoNombre 
+                  AND ROL_ID != @Rol_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe un rol con el nombre [%s].', 16, 1, @NuevoNombre);
+                RETURN;
+            END
+        END
 
-		-- Guarda Persona ID
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', 'MODIFICAR_ROL_SP'
+        -- Validación para desactivar rol en uso
+        /*IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.SESIONES_TB
+                WHERE SESION_ROL_ID = @Rol_ID 
+					AND SESION_Estado = 1
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar el rol porque hay sesiones activas que lo usan.', 16, 1);
+            END
+        END */
+        		
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_ROL_SP';
 
-		IF (@NuevoNombre IS NOT NULL AND LEN(TRIM(@NuevoNombre)) > 0)
-			OR (@NuevosAccesos IS NOT NULL AND LEN(TRIM(@NuevosAccesos)) > 0)
-			OR @NuevoEstado IS NOT NULL
-		BEGIN
-			UPDATE DBO.ROLES_TB
-			SET	ROL_Nombre = ISNULL(NULLIF(TRIM(@NuevoNombre), ''), ROL_Nombre),
-				ROL_Accesos = ISNULL(NULLIF(TRIM(@NuevosAccesos), ''), ROL_Accesos),
-				ROL_Estado = ISNULL(@NuevoEstado, ROL_Estado)
-			WHERE ROL_ID = @ROL_ID;
-		END
+        UPDATE DBO.ROLES_TB
+        SET 
+            ROL_Nombre  = ISNULL(NULLIF(@NuevoNombre,   ''), ROL_Nombre),
+            ROL_Accesos = ISNULL(NULLIF(@NuevosAccesos, ''), ROL_Accesos),
+            ROL_Estado  = ISNULL(@NuevoEstado, ROL_Estado)
+        WHERE ROL_ID = @Rol_ID;
 
 		COMMIT;
 
@@ -430,12 +466,12 @@ BEGIN
 		
 		IF @@TRANCOUNT > 0 ROLLBACK;
 
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN' , NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
 
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-		DECLARE @ErrorState INT = ERROR_STATE();
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
 
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
 
@@ -444,112 +480,148 @@ END;
 GO
 
 
+
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_SESION_SP
-	@CreadorCuenta		VARCHAR(75) = NULL, -- Responsable (NulL por si lo crea el mismo usuario, de otra forma lo crea un administrador)
-	@Persona_ID					INT,
-	@NombreUsuario		VARCHAR(75),
-	@PasswordHash		VARCHAR(255),
-	@NombreRol			VARCHAR(50)
+    @CreadorCuenta  VARCHAR(75)  = NULL, -- NULL = auto-registro, sino lo crea un Administrador
+    @Persona_ID     INT,
+    @NombreUsuario  VARCHAR(75),
+    @PasswordHash   VARCHAR(255),
+    @NombreRol      VARCHAR(50)
 AS
 BEGIN
-	
-	SET XACT_ABORT ON;
-	SET NOCOUNT ON;
 
-	DECLARE @CreadorCuenta_ID INT;
-	DECLARE @Rol_ID INT;
-	SET @NombreUsuario = TRIM(ISNULL(@NombreUsuario, ''));
-	SET @NombreRol = TRIM(ISNULL(@NombreRol, ''));
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
 
-	BEGIN TRY
+    DECLARE @CreadorCuenta_ID   INT;
+    DECLARE @Rol_ID             INT;
+ 
+    SET @NombreUsuario = TRIM(ISNULL(@NombreUsuario, ''));
+    SET @NombreRol     = TRIM(ISNULL(@NombreRol, ''));
 
-		BEGIN TRANSACTION;
+    BEGIN TRY
 
-		IF @CreadorCuenta IS NULL
-		BEGIN
-			IF NOT EXISTS (
-				SELECT 1
-				FROM DBO.PERSONAS_TB
-				WHERE PER_ID = @Persona_ID
-					AND PER_ID != 1 -- SISTEMA
-					AND PER_Estado = 1
-			)
-			BEGIN
-				RAISERROR('Persona_ID no válido.', 16, 1);
-			END
+        BEGIN TRANSACTION;
 
-			SET @CreadorCuenta_ID = @Persona_ID; -- La persona se Crea a sí misma
-		END
-		ELSE 
-		BEGIN
-			SELECT @CreadorCuenta_ID = S.SESION_PER_ID
-			FROM DBO.SESIONES_TB S
-			INNER JOIN DBO.ROLES_TB R
-				ON S.SESION_ROL_ID = R.ROL_ID
-			WHERE S.SESION_NombreUsuario = @CreadorCuenta
-				AND S.SESION_Estado = 1
-				AND R.ROL_Nombre = 'Administrador'
+        -- Validación de existencia y estado de la persona destino
+        IF NOT EXISTS (
+            SELECT 1 FROM DBO.PERSONAS_TB
+            WHERE PER_ID = @Persona_ID AND PER_Estado = 1
+        )
+        BEGIN
+            RAISERROR('La persona no existe o está inactiva.', 16, 1);
+            RETURN;
+        END
+        
+        -- Validación de permisos del creador
+        IF @CreadorCuenta IS NULL
+        BEGIN
+            -- Auto-registro: la persona destino debe ser válida y no ser el sistema
+            IF @Persona_ID = 1
+            BEGIN
+                RAISERROR('Esta cuenta no tiene permisos para auto-registrarse.', 16, 1);
+                RETURN;
+            END
+            SET @CreadorCuenta_ID = @Persona_ID;
+        END
+        ELSE 
+        BEGIN
+            SELECT @CreadorCuenta_ID = S.SESION_PER_ID
+            FROM DBO.SESIONES_TB S
+            INNER JOIN DBO.ROLES_TB R 
+                ON S.SESION_ROL_ID = R.ROL_ID
+            WHERE S.SESION_NombreUsuario = @CreadorCuenta
+              AND S.SESION_Estado = 1
+              AND R.ROL_Nombre = 'Administrador';
 
-			IF @CreadorCuenta_ID IS NULL
-			BEGIN 
-				RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @CreadorCuenta)
-			END
+            IF @CreadorCuenta_ID IS NULL
+            BEGIN
+                RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @CreadorCuenta);
+                RETURN;
+            END;
 		END;
 
-		IF EXISTS(
-			SELECT 1
-			FROM DBO.SESIONES_TB
-			WHERE SESION_NombreUsuario = @NombreUsuario
-		)
-		BEGIN
-			RAISERROR('Error: El nombre de usuario [%s] ya está registrado.', 16, 1, @NombreUsuario);
-		END;
+        IF LEN(@NombreUsuario) < 1
+        BEGIN
+            RAISERROR('El nombre de usuario no puede estar vacío.', 16, 1);
+            RETURN;
+        END;
 
-		IF LEN(@NombreUsuario) < 1
+        -- Validación de nombre de usuario único
+        IF EXISTS (
+            SELECT 1 
+            FROM DBO.SESIONES_TB 
+            WHERE SESION_NombreUsuario = @NombreUsuario
+        )
+        BEGIN
+            RAISERROR('Error: El nombre de usuario [%s] ya está registrado.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Validación de hash 
+        IF LEN(@PasswordHash) < 1
 		BEGIN
-			RAISERROR('El nombre de usuario es demasiado corto.', 16, 1);
+            RAISERROR('Hash de la contraseña no válido.', 16, 1);
+            RETURN;
 		END
 
-		IF LEN(@PasswordHash) < 1
-		BEGIN
-			RAISERROR('El Hash de la contraseña no es válido.', 16, 1);
-		END
+        -- Obtener ID del rol
+        SELECT @Rol_ID = ROL_ID 
+        FROM DBO.ROLES_TB 
+        WHERE ROL_Nombre = @NombreRol;
+ 
+        IF @Rol_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El rol [%s] no existe.', 16, 1, @NombreRol);
+            RETURN;
+        END;
 
-		SELECT @Rol_ID = ROL_ID
-		FROM DBO.ROLES_TB
-		WHERE ROL_Nombre = @NombreRol
+        -- Restricción: rol 'Sistema' solo para persona ID 1
+        IF @NombreRol = 'SISTEMA' AND @Persona_ID != 1
+        BEGIN
+            RAISERROR('Error: El rol Sistema está reservado para la cuenta del sistema.', 16, 1);
+            RETURN;
+        END;
 
-		IF @Rol_ID IS NULL
-		BEGIN
-			RAISERROR('Error: El rol [%s] no existe.', 16, 1, @NombreRol);
-		END
+        -- Validación de unicidad de rol por persona (antes del INSERT)
+        IF EXISTS (
+            SELECT 1 
+            FROM DBO.SESIONES_TB
+            WHERE SESION_PER_ID = @Persona_ID 
+                AND SESION_ROL_ID = @Rol_ID
+        )
+        BEGIN
+            RAISERROR('La persona ya tiene una sesión registrada con el rol [%s].', 16, 1, @NombreRol);
+            RETURN;
+        END;
 
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @CreadorCuenta_ID;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', 'REGISTRAR_SESION_SP';
+        -- Registrar sesión
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @CreadorCuenta_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_SESION_SP';
+ 
+        INSERT INTO DBO.SESIONES_TB (SESION_PER_ID, SESION_NombreUsuario, SESION_PwdHash, SESION_ROL_ID)
+        VALUES (@Persona_ID, @NombreUsuario, @PasswordHash, @Rol_ID);
+ 
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
 
-		INSERT INTO DBO.SESIONES_TB (SESION_PER_ID, SESION_NombreUsuario, SESION_PwdHash, SESION_ROL_ID)
-		VALUES (@Persona_ID, @NombreUsuario, @PasswordHash, @Rol_ID);
-
-		COMMIT;
-
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', NULL;
-
-	END TRY
-	BEGIN CATCH
+    END TRY
+    BEGIN CATCH
 
 		IF @@TRANCOUNT > 0 ROLLBACK;
 
-		EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
-		EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
 
-		DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-		DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-		DECLARE @ErrorState INT = ERROR_STATE();
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
 
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
 
-	END CATCH
+    END CATCH
 END;
 GO
 
