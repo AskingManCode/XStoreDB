@@ -30,12 +30,12 @@ BEGIN
 
 	BEGIN TRY
 		
-		-- NORMALIZACIÓN
+		-- Normalización
 		SET @Accion			= UPPER(TRIM(ISNULL(@Accion, '')));
 		SET @TablaAfectada	= UPPER(TRIM(ISNULL(@TablaAfectada, '')));
 		SET @Descripcion	= TRIM(ISNULL(@Descripcion, ''));
 
-        -- VALIDACIONES
+        -- Validaciones
         IF NOT EXISTS (
             SELECT 1 
 			FROM DBO.PERSONAS_TB 
@@ -144,7 +144,7 @@ BEGIN
 
 	BEGIN TRY
 		
-		-- Validación de permisos y obtención de ID_Persona
+		-- Validación de permisos y obtención de ID
 		SELECT @Persona_ID = S.SESION_PER_ID
 		FROM DBO.SESIONES_TB S
 		INNER JOIN DBO.ROLES_TB R
@@ -176,7 +176,7 @@ BEGIN
         ORDER BY A.AUD_FechaHora DESC; -- Fechas recientes primero
 		
 		BEGIN TRY
-			EXEC REGISTRAR_AUDITORIA_SP
+			EXEC DBO.REGISTRAR_AUDITORIA_SP
 				@Persona_ID		= @Persona_ID,
 				@Accion			= 'SELECT',
 				@TablaAfectada	= 'AUDITORIAS_TB',
@@ -216,6 +216,7 @@ BEGIN
 
 	BEGIN TRY
 
+        -- Validaciónes
         SELECT @Persona_ID = S.SESION_PER_ID
         FROM DBO.SESIONES_TB S
         INNER JOIN DBO.ROLES_TB R
@@ -232,7 +233,12 @@ BEGIN
 		SELECT 
 			ROL_Nombre AS [Rol]
 			, ROL_Accesos AS [Accesos]
-			, ROL_Estado AS [Estado Rol]
+			, CASE 
+                WHEN ROL_Estado = 1
+                    THEN 'Activo'
+                ELSE
+                    'Inactivo'
+            END AS [Estado Rol]
 		FROM DBO.ROLES_TB;
 
 		BEGIN TRY
@@ -281,7 +287,7 @@ BEGIN
 
 		BEGIN TRANSACTION;
 
-		-- VALIDACIÓN DE PERMISO Y OBTENER ID
+		-- Validación de permisos y obtención de ID
         SELECT @Persona_ID = S.SESION_PER_ID
         FROM DBO.SESIONES_TB S
         INNER JOIN DBO.ROLES_TB R
@@ -322,7 +328,7 @@ BEGIN
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_ROL_SP';
 
-		INSERT INTO ROLES_TB (ROL_Nombre, ROL_Accesos)
+		INSERT INTO DBO.ROLES_TB (ROL_Nombre, ROL_Accesos)
 		VALUES (@Nombre, @Accesos);
 
         COMMIT;
@@ -505,8 +511,10 @@ BEGIN
 
         -- Validación de existencia y estado de la persona destino
         IF NOT EXISTS (
-            SELECT 1 FROM DBO.PERSONAS_TB
-            WHERE PER_ID = @Persona_ID AND PER_Estado = 1
+            SELECT 1 
+            FROM DBO.PERSONAS_TB
+            WHERE PER_ID = @Persona_ID 
+                AND PER_Estado = 1
         )
         BEGIN
             RAISERROR('La persona no existe o está inactiva.', 16, 1);
@@ -626,13 +634,156 @@ END;
 GO
 
 
+
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_TIPOS_PRODUCTOS_SP
+    @NombreUsuario  VARCHAR(75)    -- Responsable
+AS 
+BEGIN
+    
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+
+    BEGIN TRY
+        
+        -- Validaciones
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido', 16, 1, @NombreUsuario);
+        END;
+
+        SELECT 
+            TIPO_PRD_Nombre AS [Tipos Productos]
+            , CASE
+                WHEN TIPO_PRD_Estado = 1
+                    THEN 'Activo'
+                ELSE 
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.TIPOS_PRODUCTOS_TB;
+
+        -- Auditoría
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'TIPOS_PRODUCTOS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_TIPOS_PRODUCTOS_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+        
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+    END CATCH
+END
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_TIPO_PODUCTO_SP
+    @NombreUsuario	VARCHAR(75), -- Responsable
+	@Nombre			VARCHAR(50)
+AS
+BEGIN
+    
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+	DECLARE @Persona_ID INT;
+	SET @Nombre	= TRIM(ISNULL(@Nombre, ''))
+
+    BEGIN TRY
+        
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos y obtener ID
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN
+        END;
+
+        IF LEN(@Nombre) <= 0
+        BEGIN
+            RAISERROR('Error: El nombre del tipo de producto no es válido.', 16, 1);
+            RETURN
+        END;
+
+        IF EXISTS (
+            SELECT 1 
+			FROM DBO.TIPOS_PRODUCTOS_TB 
+			WHERE TIPO_PRD_Nombre = @Nombre
+        )
+        BEGIN
+            RAISERROR('Error: El tipo de producto [%s] ya se encuentra registrado.', 16, 1, @Nombre);
+            RETURN;
+        END
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_TIPO_PODUCTO_SP';
+
+        INSERT INTO DBO.TIPOS_PRODUCTOS_TB (TIPO_PRD_Nombre)
+        VALUES (@Nombre);
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+        
+		IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+    END CATCH
+END;
+GO
+
+
+
 EXEC REGISTRAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
 	@Nombre = 'Chofer',
-	@Accesos = 'Pantalla_Roja'
+	@Accesos = 'Pantalla_Roja';
 
 EXEC CONSULTAR_ROLES_SP
-	@NombreUsuario = 'AskingMansOz'
+	@NombreUsuario = 'AskingMansOz';
 
 EXEC MODIFICAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -641,9 +792,12 @@ EXEC MODIFICAR_ROL_SP
 	@NuevoEstado = 1,
 	@NuevosAccesos = 'Pantalla_Registro_Usuario, Pantalla_Comprar_Productos';
 
+EXEC CONSULTAR_TIPOS_PRODUCTOS_SP
+    @NombreUsuario = 'AskingMansOz';
+
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
-	@TablaFiltro = 'Roles_TB'
+	@TablaFiltro = 'TIPOS_PRODUCTOS_TB';
 
 -- CREATE OR ALTER PROCEDURE 
 
@@ -657,7 +811,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	X REGISTRAR_ROL_SP (Insert a Roles)
 	X MODIFICAR_ROL_SP (Update a Roles) 
 
-	CONSULTAR_TIPOS_PRODUCTOS_SP (Select simple tipos_productos)
+	X CONSULTAR_TIPOS_PRODUCTOS_SP (Select simple tipos_productos)
 	REGISTRAR_TIPO_PODUCTO_SP (Insert a tipos_prodcutos)
 	MODIFICAR_TIPO_PRODUCTO_SP (Update a Tipos_productos)
 
