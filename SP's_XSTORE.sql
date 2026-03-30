@@ -657,6 +657,7 @@ BEGIN
         IF @Persona_ID IS NULL
         BEGIN
             RAISERROR('Error: El usuario [%s] no es válido', 16, 1, @NombreUsuario);
+            RETURN;
         END;
 
         SELECT 
@@ -919,7 +920,7 @@ EXEC REGISTRAR_TIPO_PODUCTO_SP
 EXEC MODIFICAR_TIPO_PRODUCTO_SP
     @NombreUsuario = 'AskingMansOz',
     @Nombre = 'Smartwatch',
-    @NuevoNombre = 'Smartwatch',
+    --@NuevoNombre = 'Smartwatch',
     @NuevoEstado = 1;
 
 EXEC CONSULTAR_AUDITORIAS_SP

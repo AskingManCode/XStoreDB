@@ -205,9 +205,11 @@ BEGIN
 END;
 GO
 
+
+
 CREATE OR ALTER TRIGGER DBO.MODIFICAR_TIPO_PRODUCTO_TR
 ON DBO.TIPOS_PRODUCTOS_TB 
-AFTER INSERT
+AFTER UPDATE
 AS
 BEGIN
     
@@ -239,8 +241,8 @@ BEGIN
             ELSE
                 'Se usó MODIFICAR_TIPO_PRODUCTO_TR.'
         END,
-        '[ Nombre: ' + I.TIPO_PRD_Nombre + ' | Estado: ' + CASE WHEN I.TIPO_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
-        '[ Nombre: ' + D.TIPO_PRD_Nombre + ' | Estado: ' + CASE WHEN D.TIPO_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+        '[ Nombre: ' + D.TIPO_PRD_Nombre + ' | Estado: ' + CASE WHEN D.TIPO_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + I.TIPO_PRD_Nombre + ' | Estado: ' + CASE WHEN I.TIPO_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
     FROM DELETED D
     INNER JOIN INSERTED I
         ON D.TIPO_PRD_ID = I.TIPO_PRD_ID;
