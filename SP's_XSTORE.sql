@@ -699,7 +699,7 @@ GO
 
 
 
-CREATE OR ALTER PROCEDURE DBO.REGISTRAR_TIPO_PODUCTO_SP
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_TIPO_PRODUCTO_SP
     @NombreUsuario	VARCHAR(75), -- Responsable
 	@Nombre			VARCHAR(50)
 AS
@@ -747,7 +747,7 @@ BEGIN
         END
 
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
-        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_TIPO_PODUCTO_SP';
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_TIPO_PRODUCTO_SP';
 
         INSERT INTO DBO.TIPOS_PRODUCTOS_TB (TIPO_PRD_Nombre)
         VALUES (@Nombre);
@@ -777,6 +777,123 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_TIPO_PRODUCTO_SP
+    @NombreUsuario  VARCHAR(75),    -- Responsable
+    @Nombre         VARCHAR(50),    -- Nombre actual del tipo de producto a modificar
+    @NuevoNombre    VARCHAR(50)     = NULL,
+    @NuevoEstado    BIT             = NULL
+AS 
+BEGIN
+    
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID   INT;
+    DECLARE @Tipo_PRD_ID  INT;
+
+    SET @Nombre       = TRIM(ISNULL(@Nombre, ''));
+    SET @NuevoNombre  = TRIM(ISNULL(@NuevoNombre, ''));
+
+    BEGIN TRY
+        
+        BEGIN TRANSACTION
+
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R 
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END
+
+        -- Obtener los datos del tipo de producto a modificar
+        SELECT @Tipo_PRD_ID = TIPO_PRD_ID
+        FROM DBO.TIPOS_PRODUCTOS_TB
+        WHERE TIPO_PRD_Nombre = @Nombre;
+
+        IF @Tipo_PRD_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El tipo de producto [%s] no existe.', 16, 1, @Nombre);
+            RETURN;
+        END;
+
+        IF LEN(@NuevoNombre) = 0
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para el tipo de producto [%s].', 16, 1, @Nombre);
+            RETURN;
+        END
+
+        -- Validación de nuevo nombre
+        IF LEN(@NuevoNombre) > 0
+        BEGIN
+            IF EXISTS(
+                SELECT 1
+                FROM DBO.TIPOS_PRODUCTOS_TB
+                WHERE TIPO_PRD_Nombre = @NuevoNombre
+                    AND TIPO_PRD_ID != @Tipo_PRD_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe un tipo de producto con el nombre [%s].', 16, 1, @NuevoNombre);
+                RETURN;
+            END
+        END;
+
+        -- Validación para desactivar un tipo de poroducto en uso
+        /*IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.PRODUCTOS_TB
+                WHERE PRD_TIPO_PRD_ID = @Tipo_PRD_ID 
+					AND PRD_Estado = 1
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar el tipo de producto porque hay productos activos que lo usan.', 16, 1);
+            END
+        END */
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_TIPO_PRODUCTO_SP';
+
+        UPDATE DBO.TIPOS_PRODUCTOS_TB
+        SET
+            TIPO_PRD_Nombre = ISNULL(NULLIF(@NuevoNombre, ''), TIPO_PRD_Nombre),
+            TIPO_PRD_Estado = ISNULL(@NuevoEstado, TIPO_PRD_Estado)
+        WHERE TIPO_PRD_ID = @Tipo_PRD_ID;
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+        
+		IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
+		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
+		DECLARE @ErrorState		INT				= ERROR_STATE();
+
+		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+
+    END CATCH
+END;
+GO
+
+
+-- CRUD ROLES
 EXEC REGISTRAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
 	@Nombre = 'Chofer',
@@ -787,16 +904,27 @@ EXEC CONSULTAR_ROLES_SP
 
 EXEC MODIFICAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
-	@Nombre = 'Cliente', 
+	@Nombre = 'Administrador', 
 	@NuevoNombre = 'Cliente',
-	@NuevoEstado = 1,
-	@NuevosAccesos = 'Pantalla_Registro_Usuario, Pantalla_Comprar_Productos';
+	@NuevoEstado = 0,
+	@NuevosAccesos = 'Pantalla_Registro_Usuario, Pantalla_Comprar_Productos, Otras pantallas';
 
 EXEC CONSULTAR_TIPOS_PRODUCTOS_SP
     @NombreUsuario = 'AskingMansOz';
 
+EXEC REGISTRAR_TIPO_PODUCTO_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'Televisor';
+
+EXEC MODIFICAR_TIPO_PRODUCTO_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'Smartwatch',
+    @NuevoNombre = 'Smartwatch',
+    @NuevoEstado = 1;
+
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
+    @FechaFiltro = '2026-03-29',
 	@TablaFiltro = 'TIPOS_PRODUCTOS_TB';
 
 -- CREATE OR ALTER PROCEDURE 
@@ -812,8 +940,8 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	X MODIFICAR_ROL_SP (Update a Roles) 
 
 	X CONSULTAR_TIPOS_PRODUCTOS_SP (Select simple tipos_productos)
-	REGISTRAR_TIPO_PODUCTO_SP (Insert a tipos_prodcutos)
-	MODIFICAR_TIPO_PRODUCTO_SP (Update a Tipos_productos)
+	X REGISTRAR_TIPO_PODUCTO_SP (Insert a tipos_prodcutos)
+	X MODIFICAR_TIPO_PRODUCTO_SP (Update a Tipos_productos)
 
 	CONSULTAR_MARCAS_PRODUCTOS_SP (select simple marcas)
 	REGISTRAR_MARCAS_PRODUCTOS_SP (Insert a marcas)

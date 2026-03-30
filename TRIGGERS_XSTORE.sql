@@ -35,7 +35,7 @@ GO
 
 CREATE OR ALTER TRIGGER DBO.REGISTRAR_ROL_TR
 ON DBO.ROLES_TB
-FOR INSERT
+AFTER INSERT
 AS
 BEGIN
 
@@ -46,9 +46,6 @@ BEGIN
 
     IF @Persona_ID IS NULL 
         SET @Persona_ID = 1; -- Fallback al sistema si no hay context
-
-    IF @Origen IS NULL
-        SET @Origen = 'Procedimiento Almacenado';
 
     INSERT INTO DBO.AUDITORIAS_TB(
         AUD_PER_ID,
@@ -80,7 +77,7 @@ GO
 
 CREATE OR ALTER TRIGGER DBO.MODIFICAR_ROL_TR
 ON DBO.ROLES_TB
-FOR UPDATE
+AFTER UPDATE
 AS
 BEGIN
     
@@ -91,9 +88,6 @@ BEGIN
 
     IF @Persona_ID IS NULL 
         SET @Persona_ID = 1; -- Fallback al sistema si no hay context
-
-    IF @Origen IS NULL
-        SET @Origen = 'Procedimiento Almacenado';
 
     INSERT INTO DBO.AUDITORIAS_TB(
         AUD_PER_ID,
@@ -127,7 +121,7 @@ GO
 
 CREATE OR ALTER TRIGGER DBO.REGISTRAR_SESION_TR
 ON DBO.SESIONES_TB
-FOR INSERT
+AFTER INSERT
 AS
 BEGIN
 
@@ -138,9 +132,6 @@ BEGIN
  
     IF @Persona_ID IS NULL 
         SET @Persona_ID = 1; -- Fallback al sistema si no hay contexto
-
-    IF @Origen IS NULL
-        SET @Origen = 'Procedimiento Almacenado';
 
     INSERT INTO DBO.AUDITORIAS_TB (
         AUD_PER_ID,
@@ -174,3 +165,84 @@ END;
 GO
 
 
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_TIPO_PRODUCTO_TR
+ON DBO.TIPOS_PRODUCTOS_TB 
+AFTER INSERT
+AS
+BEGIN
+    
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT     = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
+    IF @Persona_ID IS NULL 
+        SET @Persona_ID = 1; -- Fallback al sistema si no hay contexto
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'TIPOS_PRODUCTOS_TB',
+        I.TIPO_PRD_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_TIPO_PRODUCTO_TR.'
+            ELSE
+                'Se usó REGISTRAR_TIPO_PRODUCTO_TR.'
+        END,
+        NULL,
+        '[ Nombre: ' + I.TIPO_PRD_Nombre + ' | Estado: ' + CASE WHEN I.TIPO_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I
+END;
+GO
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_TIPO_PRODUCTO_TR
+ON DBO.TIPOS_PRODUCTOS_TB 
+AFTER INSERT
+AS
+BEGIN
+    
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1; -- Fallback al sistema si no hay context
+
+    INSERT INTO DBO.AUDITORIAS_TB(
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT 
+        @Persona_ID,
+        'UPDATE',
+        'TIPOS_PRODUCTOS_TB',
+        I.TIPO_PRD_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_TIPO_PRODUCTO_TR.'
+            ELSE
+                'Se usó MODIFICAR_TIPO_PRODUCTO_TR.'
+        END,
+        '[ Nombre: ' + I.TIPO_PRD_Nombre + ' | Estado: ' + CASE WHEN I.TIPO_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + D.TIPO_PRD_Nombre + ' | Estado: ' + CASE WHEN D.TIPO_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.TIPO_PRD_ID = I.TIPO_PRD_ID;
+END;
+GO

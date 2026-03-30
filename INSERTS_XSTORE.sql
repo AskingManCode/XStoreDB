@@ -18,9 +18,6 @@ INSERT INTO DBO.TIPOS_PERSONAS_TB (
 ) 
 VALUES ('SISTEMA', 0.00, 0.00), ('Administrador', 20, 0);
 
-SELECT *
-FROM TIPOS_PERSONAS_TB
-
 INSERT INTO DBO.PERSONAS_TB (
     PER_Identificacion,
     PER_NombreCompleto,
