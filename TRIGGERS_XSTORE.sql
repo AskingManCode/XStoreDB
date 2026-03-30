@@ -248,3 +248,90 @@ BEGIN
         ON D.TIPO_PRD_ID = I.TIPO_PRD_ID;
 END;
 GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_MARCA_PRODUCTO_TR
+ON DBO.MARCAS_PRODUCTOS_TB
+AFTER INSERT
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1; -- Fallback al sistema si no hay contexto
+ 
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'MARCAS_PRODUCTOS_TB',
+        I.MARC_PRD_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_MARCA_PRODUCTO_TR.'
+            ELSE
+                'Se usó REGISTRAR_MARCA_PRODUCTO_TR.'
+        END,
+        NULL,
+        '[ Nombre: ' + I.MARC_PRD_Nombre + ' | Estado: ' + CASE WHEN I.MARC_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I;
+ 
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_MARCA_PRODUCTO_TR
+ON DBO.MARCAS_PRODUCTOS_TB
+AFTER UPDATE
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1; -- Fallback al sistema si no hay contexto
+ 
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'MARCAS_PRODUCTOS_TB',
+        I.MARC_PRD_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_MARCA_PRODUCTO_TR.'
+            ELSE
+                'Se usó MODIFICAR_MARCA_PRODUCTO_TR.'
+        END,
+        '[ Nombre: ' + D.MARC_PRD_Nombre + ' | Estado: ' + CASE WHEN D.MARC_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + I.MARC_PRD_Nombre + ' | Estado: ' + CASE WHEN I.MARC_PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.MARC_PRD_ID = I.MARC_PRD_ID;
+END;
+GO

@@ -894,6 +894,268 @@ END;
 GO
 
 
+
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_MARCAS_PRODUCTOS_SP
+    @NombreUsuario VARCHAR(75) -- Responsable
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT;
+ 
+    BEGIN TRY
+ 
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        SELECT
+            MARC_PRD_Nombre AS [Marca]
+            , CASE
+                WHEN MARC_PRD_Estado = 1
+                    THEN 'Activo'
+                ELSE
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.MARCAS_PRODUCTOS_TB;
+ 
+        -- Auditoría
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'MARCAS_PRODUCTOS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_MARCAS_PRODUCTOS_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_MARCA_PRODUCTO_SP
+    @NombreUsuario  VARCHAR(75),  -- Responsable
+    @Nombre         VARCHAR(75)   -- Nombre de la nueva marca
+AS
+BEGIN
+ 
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT;
+    SET @Nombre = TRIM(ISNULL(@Nombre, ''));
+ 
+    BEGIN TRY
+ 
+        BEGIN TRANSACTION;
+ 
+        -- Validación de permisos y obtención de ID
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        IF LEN(@Nombre) <= 0
+        BEGIN
+            RAISERROR('Error: El nombre de la marca no es válido.', 16, 1);
+            RETURN;
+        END;
+ 
+        IF EXISTS (
+            SELECT 1
+            FROM DBO.MARCAS_PRODUCTOS_TB
+            WHERE MARC_PRD_Nombre = @Nombre
+        )
+        BEGIN
+            RAISERROR('Error: La marca [%s] ya se encuentra registrada.', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_MARCA_PRODUCTO_SP';
+ 
+        INSERT INTO DBO.MARCAS_PRODUCTOS_TB (MARC_PRD_Nombre)
+        VALUES (@Nombre);
+ 
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        IF @@TRANCOUNT > 0 ROLLBACK;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_MARCA_PRODUCTO_SP
+    @NombreUsuario  VARCHAR(75),            -- Responsable
+    @Nombre         VARCHAR(75),            -- Nombre actual de la marca a modificar
+    @NuevoNombre    VARCHAR(75)  = NULL,
+    @NuevoEstado    BIT          = NULL
+AS
+BEGIN
+ 
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID   INT;
+    DECLARE @Marc_PRD_ID  INT;
+ 
+    SET @Nombre      = TRIM(ISNULL(@Nombre, ''));
+    SET @NuevoNombre = TRIM(ISNULL(@NuevoNombre, ''));
+ 
+    BEGIN TRY
+ 
+        BEGIN TRANSACTION;
+ 
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        -- Obtener ID de la marca a modificar
+        SELECT @Marc_PRD_ID = MARC_PRD_ID
+        FROM DBO.MARCAS_PRODUCTOS_TB
+        WHERE MARC_PRD_Nombre = @Nombre;
+ 
+        IF @Marc_PRD_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La marca [%s] no existe.', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        -- Detectar si no se pasó ningún cambio
+        IF LEN(@NuevoNombre) = 0
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para la marca [%s].', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        -- Validar que el nuevo nombre no esté en uso por otra marca
+        IF LEN(@NuevoNombre) > 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.MARCAS_PRODUCTOS_TB
+                WHERE MARC_PRD_Nombre = @NuevoNombre
+                    AND MARC_PRD_ID != @Marc_PRD_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe una marca con el nombre [%s].', 16, 1, @NuevoNombre);
+                RETURN;
+            END;
+        END;
+ 
+        -- Validación para desactivar marca en uso
+        /*IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.PRODUCTOS_TB
+                WHERE PRD_MARC_PRD_ID = @Marc_PRD_ID
+                    AND PRD_Estado = 1
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar la marca porque hay productos activos que la usan.', 16, 1);
+                RETURN;
+            END;
+        END;*/
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_MARCA_PRODUCTO_SP';
+ 
+        UPDATE DBO.MARCAS_PRODUCTOS_TB
+        SET
+            MARC_PRD_Nombre = ISNULL(NULLIF(@NuevoNombre, ''), MARC_PRD_Nombre),
+            MARC_PRD_Estado = ISNULL(@NuevoEstado, MARC_PRD_Estado)
+        WHERE MARC_PRD_ID = @Marc_PRD_ID;
+ 
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        IF @@TRANCOUNT > 0 ROLLBACK;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
+
+
 -- CRUD ROLES
 EXEC REGISTRAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -919,9 +1181,22 @@ EXEC REGISTRAR_TIPO_PODUCTO_SP
 
 EXEC MODIFICAR_TIPO_PRODUCTO_SP
     @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Smartwatch',
+    @Nombre = 'Gorro',
     --@NuevoNombre = 'Smartwatch',
     @NuevoEstado = 1;
+
+EXEC CONSULTAR_MARCAS_PRODUCTOS_SP
+    @NombreUsuario = 'AskingMansOz';
+
+EXEC REGISTRAR_MARCA_PRODUCTO_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'Apple';
+
+EXEC MODIFICAR_MARCA_PRODUCTO_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'Samsung',
+    --@NuevoNombre = 'Apple',
+    @NuevoEstado = 0;
 
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -944,9 +1219,9 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	X REGISTRAR_TIPO_PODUCTO_SP (Insert a tipos_prodcutos)
 	X MODIFICAR_TIPO_PRODUCTO_SP (Update a Tipos_productos)
 
-	CONSULTAR_MARCAS_PRODUCTOS_SP (select simple marcas)
-	REGISTRAR_MARCAS_PRODUCTOS_SP (Insert a marcas)
-	MODIFICAR_MARCA_PRODUCTO_SP (Update a marcas)
+	X CONSULTAR_MARCAS_PRODUCTOS_SP (select simple marcas)
+	X REGISTRAR_MARCAS_PRODUCTOS_SP (Insert a marcas)
+	X MODIFICAR_MARCA_PRODUCTO_SP (Update a marcas)
 
 	CONSULTAR_PRODUCTOS_SP (select con joins)
 	CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
