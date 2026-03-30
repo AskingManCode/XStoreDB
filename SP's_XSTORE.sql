@@ -1156,6 +1156,269 @@ END;
 GO
 
 
+
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_UBICACIONES_SP
+    @NombreUsuario  VARCHAR(75)     -- Responsable
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT;
+ 
+    BEGIN TRY
+ 
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        SELECT
+            UBI_INV_Nombre AS [Ubicación]
+            , CASE
+                WHEN UBI_INV_Estado = 1
+                    THEN 'Activo'
+                ELSE
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.UBI_INVENTARIOS_TB;
+ 
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'UBI_INVENTARIOS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_UBICACIONES_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_UBICACION_SP
+    @NombreUsuario  VARCHAR(75),    -- Responsable
+    @Nombre         VARCHAR(75)     -- Nombre de la nueva ubicación
+AS
+BEGIN
+ 
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT;
+    SET @Nombre = TRIM(ISNULL(@Nombre, ''));
+ 
+    BEGIN TRY
+ 
+        BEGIN TRANSACTION;
+ 
+        -- Validación de permisos y obtención de ID
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        IF LEN(@Nombre) <= 0
+        BEGIN
+            RAISERROR('Error: El nombre de la ubicación no es válido.', 16, 1);
+            RETURN;
+        END;
+ 
+        IF EXISTS (
+            SELECT 1
+            FROM DBO.UBI_INVENTARIOS_TB
+            WHERE UBI_INV_Nombre = @Nombre
+        )
+        BEGIN
+            RAISERROR('Error: La ubicación [%s] ya se encuentra registrada.', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_UBICACION_SP';
+ 
+        INSERT INTO DBO.UBI_INVENTARIOS_TB (UBI_INV_Nombre)
+        VALUES (@Nombre);
+ 
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        IF @@TRANCOUNT > 0 ROLLBACK;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_UBICACION_SP
+    @NombreUsuario  VARCHAR(75),            -- Responsable
+    @Nombre         VARCHAR(75),            -- Nombre actual de la ubicación a modificar
+    @NuevoNombre    VARCHAR(75)  = NULL,
+    @NuevoEstado    BIT          = NULL
+AS
+BEGIN
+ 
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT;
+    DECLARE @UBI_INV_ID INT;
+ 
+    SET @Nombre      = TRIM(ISNULL(@Nombre, ''));
+    SET @NuevoNombre = TRIM(ISNULL(@NuevoNombre, ''));
+ 
+    BEGIN TRY
+ 
+        BEGIN TRANSACTION;
+ 
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        -- Obtener ID de la ubicación a modificar
+        SELECT @UBI_INV_ID = UBI_INV_ID
+        FROM DBO.UBI_INVENTARIOS_TB
+        WHERE UBI_INV_Nombre = @Nombre;
+ 
+        IF @UBI_INV_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La ubicación [%s] no existe.', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        -- Detectar si no se pasó ningún cambio
+        IF LEN(@NuevoNombre) = 0
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para la ubicación [%s].', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        -- Validar que el nuevo nombre no esté en uso por otra ubicación
+        IF LEN(@NuevoNombre) > 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.UBI_INVENTARIOS_TB
+                WHERE UBI_INV_Nombre = @NuevoNombre
+                    AND UBI_INV_ID != @UBI_INV_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe una ubicación con el nombre [%s].', 16, 1, @NuevoNombre);
+                RETURN;
+            END;
+        END;
+ 
+        -- Validación para desactivar ubicación en uso
+        /*IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.INVENTARIOS_TB
+                WHERE INV_UBI_INV_ID = @UBI_INV_ID
+                    AND INV_Estado = 1
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar la ubicación porque tiene inventario activo asignado.', 16, 1);
+                RETURN;
+            END;
+        END;*/
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_UBICACION_SP';
+ 
+        UPDATE DBO.UBI_INVENTARIOS_TB
+        SET
+            UBI_INV_Nombre = ISNULL(NULLIF(@NuevoNombre, ''), UBI_INV_Nombre),
+            UBI_INV_Estado = ISNULL(@NuevoEstado, UBI_INV_Estado)
+        WHERE UBI_INV_ID = @UBI_INV_ID;
+ 
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        IF @@TRANCOUNT > 0 ROLLBACK;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
+
+
+
+
 -- CRUD ROLES
 EXEC REGISTRAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -1198,6 +1461,19 @@ EXEC MODIFICAR_MARCA_PRODUCTO_SP
     --@NuevoNombre = 'Apple',
     @NuevoEstado = 0;
 
+EXEC CONSULTAR_UBICACIONES_SP
+    @NombreUsuario = 'AskingMansOz';
+
+EXEC REGISTRAR_UBICACION_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'XSTORE Cartago';
+
+EXEC MODIFICAR_UBICACION_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'Bodega Central',
+    @NuevoNombre = 'Bodega Central',
+    @NuevoEstado = 1;
+
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
     @FechaFiltro = '2026-03-29',
@@ -1223,16 +1499,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	X REGISTRAR_MARCAS_PRODUCTOS_SP (Insert a marcas)
 	X MODIFICAR_MARCA_PRODUCTO_SP (Update a marcas)
 
-	CONSULTAR_PRODUCTOS_SP (select con joins)
-	CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
-	CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
-	CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
-	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento null porque apenas se crea el producto, se busca en inventario y en ubicación y 
-								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
-								se agrega a inventario y se le pone la cantidad agregada al registro)
-	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, no aplica update al descuento)
-
-	CONSULTAR_UBICACIONES_SP (Select simple nombre)
+    CONSULTAR_UBICACIONES_SP (Select simple nombre)
 	REGISTRAR_UBICACION_SP (Insert UBI_INVENTARIOS)
 	MODIFICAR_UBICACION_SP (Update a UBI_INVENTARIOS)
 
@@ -1242,7 +1509,17 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	CONSULTAR_INVENTARIOS_PROVEEDORES_SP (Select y join por proveedores)
 	MODIFICAR_STOCK_MINIMO_SP (Update StockMinimo de un producto)
 
-	CONSULTAR_CATEGORIAS_DESCUENTOS_SP (Select simple)
+	CONSULTAR_PRODUCTOS_SP (select con joins)
+	CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
+	CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
+	CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
+
+	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento null porque apenas se crea el producto, se busca en inventario y en ubicación y 
+								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
+								se agrega a inventario y se le pone la cantidad agregada al registro)
+	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, no aplica update al descuento)
+
+	X CONSULTAR_CATEGORIAS_DESCUENTOS_SP (Select simple)
 	REGISTRAR_CATEGORIA_DESCUENTO_SP (Insert Cat_descuentos)
 	MODIFICAR_CAT_DESCUENTO_SP (Update cat_descuento)
 
@@ -1256,7 +1533,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios)
 	QUITAR_DESCUENTO_PRODUCTO_SP (Se aplica un null a la referencia del descuento que tenía antes)
 
-	REGISTRAR_SESION_SP
+	X REGISTRAR_SESION_SP
 	VERIFICAR_SESION_SP (Devuelve el nombre de Usuario para mostrarlo en la información de cuenta, sino, error, verifica que el usuario exista)
 	MODIFICAR_SESION_SP (Cambia contraseña si se cambia o nombre de usuario, Recordar NombreUsuario es UNIQUE)
 
@@ -1289,3 +1566,262 @@ EXEC CONSULTAR_AUDITORIAS_SP
 						agregar productos, verificar descuentos, aplicar descuentos si existen, 
 						agregar cantidad compra al tipo de cliente, verificar suma de montos, aplicar impuestos)
 */
+
+
+/*
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_CATEGORIAS_DESCUENTOS_SP
+    @NombreUsuario  VARCHAR(75)     -- Responsable
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+
+    BEGIN TRY
+
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        SELECT
+            CAT_DESC_Nombre AS [Categoría]
+            , CASE
+                WHEN CAT_DESC_Estado = 1
+                    THEN 'Activo'
+                ELSE
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.CAT_DESCUENTOS_TB;
+
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'CAT_DESCUENTOS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_CATEGORIAS_DESCUENTOS_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_CATEGORIA_DESCUENTO_SP
+    @NombreUsuario  VARCHAR(75),    -- Responsable
+    @Nombre         VARCHAR(75)     -- Nombre de la nueva categoría
+AS
+BEGIN
+
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+    SET @Nombre = TRIM(ISNULL(@Nombre, ''));
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos y obtención de ID
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        IF LEN(@Nombre) <= 0
+        BEGIN
+            RAISERROR('Error: El nombre de la categoría no es válido.', 16, 1);
+            RETURN;
+        END;
+
+        IF EXISTS (
+            SELECT 1
+            FROM DBO.CAT_DESCUENTOS_TB
+            WHERE CAT_DESC_Nombre = @Nombre
+        )
+        BEGIN
+            RAISERROR('Error: La categoría [%s] ya se encuentra registrada.', 16, 1, @Nombre);
+            RETURN;
+        END;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_CATEGORIA_DESCUENTO_SP';
+
+        INSERT INTO DBO.CAT_DESCUENTOS_TB (CAT_DESC_Nombre)
+        VALUES (@Nombre);
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_CAT_DESCUENTO_SP
+    @NombreUsuario  VARCHAR(75),            -- Responsable
+    @Nombre         VARCHAR(75),            -- Nombre actual de la categoría a modificar
+    @NuevoNombre    VARCHAR(75)  = NULL,
+    @NuevoEstado    BIT          = NULL
+AS
+BEGIN
+
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID     INT;
+    DECLARE @CAT_DESC_ID    INT;
+
+    SET @Nombre      = TRIM(ISNULL(@Nombre,      ''));
+    SET @NuevoNombre = TRIM(ISNULL(@NuevoNombre, ''));
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Obtener ID de la categoría a modificar
+        SELECT @CAT_DESC_ID = CAT_DESC_ID
+        FROM DBO.CAT_DESCUENTOS_TB
+        WHERE CAT_DESC_Nombre = @Nombre;
+
+        IF @CAT_DESC_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La categoría [%s] no existe.', 16, 1, @Nombre);
+            RETURN;
+        END;
+
+        -- Detectar si no se pasó ningún cambio
+        IF LEN(@NuevoNombre) = 0
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para la categoría [%s].', 16, 1, @Nombre);
+            RETURN;
+        END;
+
+        -- Validar que el nuevo nombre no esté en uso por otra categoría
+        IF LEN(@NuevoNombre) > 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.CAT_DESCUENTOS_TB
+                WHERE CAT_DESC_Nombre = @NuevoNombre
+                    AND CAT_DESC_ID != @CAT_DESC_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe una categoría con el nombre [%s].', 16, 1, @NuevoNombre);
+                RETURN;
+            END;
+        END;
+
+        -- Validación para desactivar categoría en uso
+        /*IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.DESCUENTOS_TB
+                WHERE DESC_CAT_DESC_ID = @CAT_DESC_ID
+                    AND DESC_Estado = 1
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar la categoría porque hay descuentos activos que la usan.', 16, 1);
+                RETURN;
+            END;
+        END;*/
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_CAT_DESCUENTO_SP';
+
+        UPDATE DBO.CAT_DESCUENTOS_TB
+        SET
+            CAT_DESC_Nombre = ISNULL(NULLIF(@NuevoNombre, ''), CAT_DESC_Nombre),
+            CAT_DESC_Estado = ISNULL(@NuevoEstado, CAT_DESC_Estado)
+        WHERE CAT_DESC_ID = @CAT_DESC_ID;
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO*/

@@ -335,3 +335,176 @@ BEGIN
         ON D.MARC_PRD_ID = I.MARC_PRD_ID;
 END;
 GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_UBICACION_TR
+ON DBO.UBI_INVENTARIOS_TB
+AFTER INSERT
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+ 
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'UBI_INVENTARIOS_TB',
+        I.UBI_INV_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_UBICACION_TR.'
+            ELSE
+                'Se usó REGISTRAR_UBICACION_TR.'
+        END,
+        NULL,
+        '[ Nombre: ' + I.UBI_INV_Nombre + ' | Estado: ' + CASE WHEN I.UBI_INV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I;
+END;
+GO
+ 
+
+ 
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_UBICACION_TR
+ON DBO.UBI_INVENTARIOS_TB
+AFTER UPDATE
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+ 
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'UBI_INVENTARIOS_TB',
+        I.UBI_INV_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_UBICACION_TR.'
+            ELSE
+                'Se usó MODIFICAR_UBICACION_TR.'
+        END,
+        '[ Nombre: ' + D.UBI_INV_Nombre + ' | Estado: ' + CASE WHEN D.UBI_INV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + I.UBI_INV_Nombre + ' | Estado: ' + CASE WHEN I.UBI_INV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.UBI_INV_ID = I.UBI_INV_ID;
+END;
+GO
+
+/*
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_CAT_DESCUENTO_TR
+ON DBO.CAT_DESCUENTOS_TB
+AFTER INSERT
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'CAT_DESCUENTOS_TB',
+        I.CAT_DESC_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_CAT_DESCUENTO_TR.'
+            ELSE
+                'Se usó REGISTRAR_CAT_DESCUENTO_TR.'
+        END,
+        NULL,
+        '[ Nombre: ' + I.CAT_DESC_Nombre + ' | Estado: ' + CASE WHEN I.CAT_DESC_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I;
+
+END;
+GO
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_CAT_DESCUENTO_TR
+ON DBO.CAT_DESCUENTOS_TB
+AFTER UPDATE
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'CAT_DESCUENTOS_TB',
+        I.CAT_DESC_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_CAT_DESCUENTO_TR.'
+            ELSE
+                'Se usó MODIFICAR_CAT_DESCUENTO_TR.'
+        END,
+        '[ Nombre: ' + D.CAT_DESC_Nombre + ' | Estado: ' + CASE WHEN D.CAT_DESC_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + I.CAT_DESC_Nombre + ' | Estado: ' + CASE WHEN I.CAT_DESC_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.CAT_DESC_ID = I.CAT_DESC_ID;
+
+END;
+GO
+*/
