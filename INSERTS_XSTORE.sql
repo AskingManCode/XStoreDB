@@ -53,13 +53,4 @@ EXEC REGISTRAR_SESION_SP
 	@Persona_ID = 2,
 	@NombreUsuario = 'AskingMansOz',
 	@PasswordHash = '1234',
-	@NombreRol = 'Administrador'
-
-SELECT *
-FROM DBO.PERSONAS_TB;
-
-SELECT * 
-FROM DBO.ROLES_TB
-
-SELECT *
-FROM SESIONES_TB
+	@NombreRol = 'Administrador';

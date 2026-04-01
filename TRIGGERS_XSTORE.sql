@@ -508,3 +508,95 @@ BEGIN
         ON D.CAT_DESC_ID = I.CAT_DESC_ID;
 END;
 GO
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_TIPO_PERSONA_TR
+ON DBO.TIPOS_PERSONAS_TB
+AFTER INSERT
+AS
+BEGIN
+    
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'TIPOS_PERSONAS_TB',
+        I.TIPO_PER_ID,
+        CASE
+            WHEN @Origen IS NOT NULL 
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_TIPO_PERSONA_TR.'
+            ELSE 
+                'Se usó REGISTRAR_TIPO_PERSONA_TR.'
+        END,
+        NULL,
+        '[ Nombre: ' + I.TIPO_PER_Nombre + 
+        ' | Descuento %: ' + CONVERT(VARCHAR(30), I.TIPO_PER_DescuentoPct) + 
+        '% | Monto Meta: ' + CONVERT(VARCHAR(30), I.TIPO_PER_MontoMeta) + 
+        ' | Estado: ' + CASE WHEN I.TIPO_PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_TIPO_PERSONA_TR
+ON DBO.TIPOS_PERSONAS_TB
+AFTER UPDATE
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'TIPOS_PERSONAS_TB',
+        I.TIPO_PER_ID,
+        CASE
+            WHEN @Origen IS NOT NULL THEN 'Se usó ' + @Origen + ' y MODIFICAR_TIPO_PERSONA_TR.'
+            ELSE 'Se usó MODIFICAR_TIPO_PERSONA_TR.'
+        END,
+        '[ Nombre: ' + D.TIPO_PER_Nombre + 
+        ' | Descuento %: ' + CONVERT(VARCHAR(30), D.TIPO_PER_DescuentoPct) + 
+        '% | Monto Meta: ' + CONVERT(VARCHAR(30), D.TIPO_PER_MontoMeta) + 
+        ' | Estado: ' + CASE WHEN D.TIPO_PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + I.TIPO_PER_Nombre + 
+        ' | Descuento %: ' + CONVERT(VARCHAR(30), I.TIPO_PER_DescuentoPct) + 
+        '% | Monto Meta: ' + CONVERT(VARCHAR(30), I.TIPO_PER_MontoMeta) + 
+        ' | Estado: ' + CASE WHEN I.TIPO_PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.TIPO_PER_ID = I.TIPO_PER_ID;
+END;
+GO

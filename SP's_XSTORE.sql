@@ -1679,6 +1679,306 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_TIPOS_PERSONAS_SP
+    @NombreUsuario VARCHAR(75)
+AS
+BEGIN
+    
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+
+    BEGIN TRY
+
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+          AND S.SESION_Estado = 1
+          AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        SELECT
+            TP.TIPO_PER_Nombre AS [Tipo Persona],
+            TP.TIPO_PER_DescuentoPct AS [Descuento %],
+            TP.TIPO_PER_MontoMeta AS [Monto Meta],
+            CASE
+                WHEN TP.TIPO_PER_Estado = 1 
+                    THEN 'Activo'
+                ELSE 
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.TIPOS_PERSONAS_TB TP
+        WHERE TP.TIPO_PER_Nombre != 'SISTEMA'
+        ORDER BY TP.TIPO_PER_ID;
+
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'TIPOS_PERSONAS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_TIPOS_PERSONAS_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH;
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_TIPO_PERSONA_SP
+    @NombreUsuario  VARCHAR(75),    -- Responsable
+    @Nombre         VARCHAR(50),
+    @DescuentoPct   DECIMAL(5,2),
+    @MontoMeta      DECIMAL(10,2)
+AS
+BEGIN
+
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+    SET @Nombre = TRIM(ISNULL(@Nombre, ''));
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+          AND S.SESION_Estado = 1
+          AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        IF LEN(@Nombre) <= 0
+        BEGIN
+            RAISERROR('Error: El nombre del tipo de persona no es válido.', 16, 1);
+            RETURN;
+        END;
+
+        IF EXISTS (
+            SELECT 1
+            FROM DBO.TIPOS_PERSONAS_TB
+            WHERE TIPO_PER_Nombre = @Nombre
+        )
+        BEGIN
+            RAISERROR('Error: El tipo de persona [%s] ya está registrado.', 16, 1, @Nombre);
+            RETURN;
+        END;
+
+        IF @DescuentoPct < 0 OR @DescuentoPct > 100
+        BEGIN
+            RAISERROR('Error: El descuento debe estar entre 0 y 100.', 16, 1);
+            RETURN;
+        END;
+
+        IF @MontoMeta < 0
+        BEGIN
+            RAISERROR('Error: El monto meta no puede ser negativo.', 16, 1);
+            RETURN;
+        END;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_TIPO_PERSONA_SP';
+
+        INSERT INTO DBO.TIPOS_PERSONAS_TB (TIPO_PER_Nombre, TIPO_PER_DescuentoPct, TIPO_PER_MontoMeta)
+        VALUES (@Nombre, @DescuentoPct, @MontoMeta);
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_TIPO_PERSONA_SP
+    @NombreUsuario      VARCHAR(75),
+    @Nombre             VARCHAR(50),
+    @NuevoNombre        VARCHAR(50)     = NULL,
+    @NuevoDescuentoPct  DECIMAL(5,2)    = NULL,
+    @NuevoMontoMeta     DECIMAL(10,2)   = NULL,
+    @NuevoEstado        BIT             = NULL
+AS
+BEGIN
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID     INT;
+    DECLARE @Tipo_Per_ID    INT;
+    DECLARE @EsCritico      BIT = 0;
+
+    SET @NuevoNombre = TRIM(ISNULL(@NuevoNombre, ''));
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Obtener los datos del tipo de persona a modificar
+        SELECT
+            @Tipo_Per_ID = TIPO_PER_ID,
+            @EsCritico = CASE WHEN TIPO_PER_Nombre = 'SISTEMA' THEN 1 ELSE 0 END
+        FROM DBO.TIPOS_PERSONAS_TB
+        WHERE TIPO_PER_Nombre = @Nombre;
+
+        IF @Tipo_Per_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El tipo de persona [%s] no existe.', 16, 1, @Nombre);
+            RETURN;
+        END;
+
+        IF @EsCritico = 1 AND (LEN(@NuevoNombre) > 0 OR @NuevoEstado = 0)
+        BEGIN
+            RAISERROR('No se permite renombrar o desactivar el tipo de persona SISTEMA.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@NuevoNombre) = 0
+           AND @NuevoDescuentoPct IS NULL
+           AND @NuevoMontoMeta IS NULL
+           AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para el tipo de persona.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@NuevoNombre) > 0
+           AND EXISTS (
+                SELECT 1
+                FROM DBO.TIPOS_PERSONAS_TB
+                WHERE TIPO_PER_Nombre = @NuevoNombre
+                  AND TIPO_PER_ID != @Tipo_Per_ID
+           )
+        BEGIN
+            RAISERROR('Error: Ya existe un tipo de persona con nombre [%s].', 16, 1, @NuevoNombre);
+            RETURN;
+        END;
+
+        IF @NuevoDescuentoPct IS NOT NULL
+           AND (@NuevoDescuentoPct < 0 OR @NuevoDescuentoPct > 100)
+        BEGIN
+            RAISERROR('Error: El descuento debe estar entre 0 y 100.', 16, 1);
+            RETURN;
+        END;
+
+        IF @NuevoMontoMeta IS NOT NULL
+           AND @NuevoMontoMeta < 0
+        BEGIN
+            RAISERROR('Error: El monto meta no puede ser negativo.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validación para desactivar un tipo de persona en uso
+        /*IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.TIPOS_PERSONAS_TB
+                WHERE TIPO_PER_ID = @Tipo_Per_ID 
+					AND TIPO_PER_Estado = 1
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar el tipo de persona porque hay personas activas que lo usan.', 16, 1);
+            END
+        END */
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_TIPO_PERSONA_SP';
+
+        UPDATE DBO.TIPOS_PERSONAS_TB
+        SET
+            TIPO_PER_Nombre         = ISNULL(NULLIF(@NuevoNombre, ''), TIPO_PER_Nombre),
+            TIPO_PER_DescuentoPct   = ISNULL(@NuevoDescuentoPct, TIPO_PER_DescuentoPct),
+            TIPO_PER_MontoMeta      = ISNULL(@NuevoMontoMeta, TIPO_PER_MontoMeta),
+            TIPO_PER_Estado         = ISNULL(@NuevoEstado, TIPO_PER_Estado)
+        WHERE TIPO_PER_ID = @Tipo_Per_ID;
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN'    , NULL;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN'    , NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+
 -- CRUD ROLES
 EXEC REGISTRAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -1747,6 +2047,23 @@ EXEC MODIFICAR_CAT_DESCUENTO_SP
     @NuevoNombre = 'Navideño',
     @NuevoEstado = 1;
 
+EXEC CONSULTAR_TIPOS_PERSONAS_SP
+    @NombreUsuario = 'AskingMansOz';
+
+EXEC REGISTRAR_TIPO_PERSONA_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'Cliente Fecuente',
+    @DescuentoPct = 5000,
+    @MontoMeta = 500000;
+
+EXEC MODIFICAR_TIPO_PERSONA_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Nombre = 'Cliente Frecuente',
+    @NuevoNombre = 'Cliente Frecuente',
+    @NuevoDescuentoPct = 10,
+    @NuevoMontoMeta = 500000,
+    @NuevoEstado = 1;
+
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
     @FechaFiltro = '2026-03-29',
@@ -1793,8 +2110,8 @@ EXEC CONSULTAR_AUDITORIAS_SP
 								se agrega a inventario y se le pone la cantidad agregada al registro)
 	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, no aplica update al descuento)
 
-	X CONSULTAR_CATEGORIAS_DESCUENTOS_SP (Select simple)
-	X REGISTRAR_CATEGORIA_DESCUENTO_SP (Insert Cat_descuentos)
+	X CONSULTAR_CAT_DESCUENTOS_SP (Select simple)
+	X REGISTRAR_CAT_DESCUENTO_SP (Insert Cat_descuentos)
 	X MODIFICAR_CAT_DESCUENTO_SP (Update cat_descuento)
 
 	CONSULTAR_DESCUENTOS_SP (Select y join a cat_descuentos)
