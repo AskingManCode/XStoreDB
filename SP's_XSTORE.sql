@@ -1979,6 +1979,169 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_PERSONAS_SP
+    @NombreUsuario  VARCHAR(75),             -- Responsable
+    @Filtro         VARCHAR(20)     = NULL,  -- Administradores, Vendedores, Clientes, Proveedores, Null = Todos
+    @Busqueda       VARCHAR(100)    = NULL   -- Búsqueda parcial en Identificación, Nombre, Correo, Teléfono
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+    DECLARE @BusquedaLike VARCHAR(102);
+    DECLARE @Descripcion VARCHAR(250);
+
+    SET @Filtro = UPPER(TRIM(ISNULL(@Filtro, '')));
+
+    BEGIN TRY
+
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Preparación del parámetro de búsqueda
+        IF @Busqueda IS NOT NULL
+            SET @BusquedaLike = '%' + TRIM(@Busqueda) + '%';
+
+        -- Filtro inválido
+        IF @Filtro NOT IN ('ADMINISTRADORES', 'VENDEDORES', 'CLIENTES', 'PROVEEDORES', '')
+        BEGIN
+            RAISERROR('Error: Filtro [%s] no válido. Use: Administradores, Vendedores, Clientes, Proveedores o deje vacío para mostrar a todos.', 16, 1, @Filtro);
+            RETURN;
+        END;
+
+        -- Personas con roles (Administradores, Vendedores, Clientes)
+        SELECT 
+            P.PER_ID AS [ID Persona]
+            , P.PER_Identificacion AS [Identificación]
+            , P.PER_NombreCompleto AS [Nombre Completo]
+            , P.PER_Telefono AS [Teléfono]
+            , P.PER_Correo AS [Correo]
+            , P.PER_Direccion AS [Dirección]
+            , TP.TIPO_PER_Nombre AS [Tipo Descuento]
+            , CONVERT(VARCHAR(5), TP.TIPO_PER_DescuentoPct) + '%' AS [Descuento %]
+            , R.ROL_Nombre AS [Rol]
+            , S.SESION_NombreUsuario AS [Nombre Usuario]
+            , CONVERT(VARCHAR(10), P.PER_FechaRegistro, 120) AS [Fecha Registro]
+            , CASE 
+                WHEN P.PER_Estado = 1 AND S.SESION_Estado = 1 AND R.ROL_Estado = 1
+                    THEN 'Activo'
+                ELSE 
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.PERSONAS_TB P
+        INNER JOIN DBO.TIPOS_PERSONAS_TB TP
+            ON P.PER_TIPO_PER_ID = TP.TIPO_PER_ID
+        INNER JOIN DBO.SESIONES_TB S
+            ON P.PER_ID = S.SESION_PER_ID
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE P.PER_ID != 1  -- Reservado para SISTEMA
+            AND (@Filtro = '' -- Filtro aplicado
+                OR (@Filtro = 'ADMINISTRADORES' AND R.ROL_Nombre = 'Administrador')
+                OR (@Filtro = 'VENDEDORES' AND R.ROL_Nombre = 'Vendedor')
+                OR (@Filtro = 'CLIENTES' AND R.ROL_Nombre = 'Cliente'))
+            AND (@Busqueda IS NULL -- Filtro de búsqueda específica
+                OR P.PER_Identificacion LIKE @BusquedaLike
+                OR P.PER_NombreCompleto LIKE @BusquedaLike
+                OR P.PER_Correo LIKE @BusquedaLike
+                OR P.PER_Telefono LIKE @BusquedaLike)
+        UNION ALL
+        -- Proveedores 
+            -- Si filtro es 'PROVEEDORES' → muestra TODOS los proveedores
+            -- Si filtro es '' → muestra solo proveedores que NO tienen sesión (evitar duplicados)
+        SELECT 
+            P.PER_ID AS [ID Persona]
+            , P.PER_Identificacion AS [Identificación]
+            , P.PER_NombreCompleto AS [Nombre Completo]
+            , P.PER_Telefono AS [Teléfono]
+            , P.PER_Correo AS [Correo]
+            , P.PER_Direccion AS [Dirección]
+            , TP.TIPO_PER_Nombre AS [Tipo Descuento]
+            , CONVERT(VARCHAR(5), TP.TIPO_PER_DescuentoPct) + '%' AS [Descuento %]
+            , 'Proveedor' AS [Rol]
+            , 'N/A' AS [Nombre Usuario]
+            , CONVERT(VARCHAR(10), P.PER_FechaRegistro, 120) AS [Fecha Registro]
+            , CASE 
+                WHEN P.PER_Estado = 1 AND PRV.PRV_Estado = 1
+                    THEN 'Activo'
+                ELSE 
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.PERSONAS_TB P
+        INNER JOIN DBO.TIPOS_PERSONAS_TB TP
+            ON P.PER_TIPO_PER_ID = TP.TIPO_PER_ID
+        INNER JOIN DBO.PROVEEDORES_TB PRV
+            ON P.PER_ID = PRV.PRV_PER_ID
+        WHERE P.PER_ID != 1  -- Reservado para SISTEMA
+            AND (@Filtro IN ('PROVEEDORES', '') -- Filtro específico para proveedores
+                AND (
+                    @Filtro = 'PROVEEDORES'  -- Si filtro es Proveedores, mostrar todos
+                    OR NOT EXISTS (          -- Si filtro es vacío, mostrar solo proveedores sin cuenta
+                        SELECT 1 
+                        FROM DBO.SESIONES_TB S2 
+                        WHERE S2.SESION_PER_ID = P.PER_ID
+                    )
+                ))
+            AND (@Busqueda IS NULL -- Filtro de búsqueda específica
+                OR P.PER_Identificacion LIKE @BusquedaLike
+                OR P.PER_NombreCompleto LIKE @BusquedaLike
+                OR P.PER_Correo LIKE @BusquedaLike
+                OR P.PER_Telefono LIKE @BusquedaLike)
+        ORDER BY [ID Persona], [Nombre Completo], [Rol];
+
+        BEGIN TRY
+            SET @Descripcion = 'Se usó CONSULTAR_PERSONAS_SP' + 
+                CASE 
+                    WHEN @Filtro != '' 
+                        THEN ' con filtro [' + @Filtro + '].'
+                    ELSE 
+                        ' sin filtro específico (todos).'
+                END;
+
+            IF @Busqueda IS NOT NULL
+                SET @Descripcion = LEFT(@Descripcion, 230) + ' Búsqueda: ' + LEFT(@Busqueda, 15) + '.';
+        
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'PERSONAS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = @Descripcion,
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+
+
 -- CRUD ROLES
 EXEC REGISTRAR_ROL_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -2064,6 +2227,10 @@ EXEC MODIFICAR_TIPO_PERSONA_SP
     @NuevoMontoMeta = 500000,
     @NuevoEstado = 1;
 
+EXEC CONSULTAR_PERSONAS_SP
+    @NombreUsuario = 'AskingMansOz',
+    @Filtro = 'Administradores';
+
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
     @FechaFiltro = '2026-03-29',
@@ -2130,17 +2297,20 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	MODIFICAR_SESION_SP (Cambia contraseña si se cambia o nombre de usuario, Recordar NombreUsuario es UNIQUE)
 
 	-------------------------------------------------------------------------------------------------------------------------------------------------------
-	CONSULTAR_TIPOS_PERSONAS_SP (Select simple)
-	REGISTRAR_TIPO_PERSONA_SP (Insert tipos_personas)
-	MODIFICAR_TIPO_PERSONA_SP (Update tipos_personas, activo o inactivo)
+	X CONSULTAR_TIPOS_PERSONAS_SP (Select simple)
+	X REGISTRAR_TIPO_PERSONA_SP (Insert tipos_personas)
+	X MODIFICAR_TIPO_PERSONA_SP (Update tipos_personas, activo o inactivo)
 
 	CONSULTAR_PERSONAS_SP (Select join con tipo_persona, vendedor(empleados) o administradores o proveedores, o todo junto)
+
 	REGISTRAR_USUARIO_SP (Insert a personas que usa tipo_personaID, insert a sesiones que usa rolID y personaID (Entra como varchar y busca el ID para asignarlo a la tabla), 
 							Rol Administrador, Vendedor(Empleado) o Cliente, si los datos ya existen y es un proveedor previamente registrado se le puede 
 							agregar como rol cliente a este proveedor para que haga compras en caso de que decida ser cliente)
+
 	MODIFICAR_PERSONA_SP (Update a personas) -- El tipo de persona no se cambia porque se hará automático según las comprás realizadas
 
 	REGISTRAR_PROVEEDOR_SP (Agrega a Persona, Lo asigna como proveedor en la tabla de proveedores, Se le asigna tipo de persona cliente_normal 0%)
+
 	MODIFICAR_PROVEEDOR_SP (Update en Personas proveedores, activo o inactivo)
 
 	Nota: 
