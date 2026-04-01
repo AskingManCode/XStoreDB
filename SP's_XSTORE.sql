@@ -1934,9 +1934,9 @@ BEGIN
         BEGIN
             IF EXISTS (
                 SELECT 1
-                FROM DBO.TIPOS_PERSONAS_TB
-                WHERE TIPO_PER_ID = @Tipo_Per_ID 
-					AND TIPO_PER_Estado = 1
+                FROM DBO.PERSONAS_TB
+                WHERE PER_TIPO_PER_ID = @Tipo_Per_ID 
+					AND PER_Estado = 1
             )
             BEGIN
                 RAISERROR('No se puede desactivar el tipo de persona porque hay personas activas que lo usan.', 16, 1);
@@ -1998,7 +1998,7 @@ EXEC MODIFICAR_ROL_SP
 EXEC CONSULTAR_TIPOS_PRODUCTOS_SP
     @NombreUsuario = 'AskingMansOz';
 
-EXEC REGISTRAR_TIPO_PODUCTO_SP
+EXEC REGISTRAR_TIPO_PRODUCTO_SP
     @NombreUsuario = 'AskingMansOz',
     @Nombre = 'Televisor';
 
@@ -2053,7 +2053,7 @@ EXEC CONSULTAR_TIPOS_PERSONAS_SP
 EXEC REGISTRAR_TIPO_PERSONA_SP
     @NombreUsuario = 'AskingMansOz',
     @Nombre = 'Cliente Fecuente',
-    @DescuentoPct = 5000,
+    @DescuentoPct = 10,
     @MontoMeta = 500000;
 
 EXEC MODIFICAR_TIPO_PERSONA_SP
