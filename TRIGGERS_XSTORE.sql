@@ -600,3 +600,198 @@ BEGIN
         ON D.TIPO_PER_ID = I.TIPO_PER_ID;
 END;
 GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_PERSONA_TR
+ON DBO.PERSONAS_TB
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'PERSONAS_TB',
+        I.PER_ID,
+        CASE
+            WHEN @Origen IS NOT NULL 
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_PERSONA_TR.'
+            ELSE 
+                'Se usó REGISTRAR_PERSONA_TR.'
+        END,
+        NULL,
+        '[ Identificacion: ' + I.PER_Identificacion + 
+        ' | Nombre Completo: ' + I.PER_NombreCompleto + 
+        ' | Teléfono: ' + COALESCE(I.PER_Telefono, 'N/A') + 
+        ' | Correo: ' + COALESCE(I.PER_Correo, 'N/A') + 
+        ' | Dirección: ' + COALESCE(I.PER_Direccion, 'N/A') + 
+        ' | Tipo Persona: ' + TP.TIPO_PER_Nombre + 
+        ' | Estado: ' + CASE WHEN I.PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I
+        INNER JOIN TIPOS_PERSONAS_TB TP
+            ON I.PER_TIPO_PER_ID = TP.TIPO_PER_ID;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_PERSONA_TR
+ON DBO.PERSONAS_TB
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB
+    (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'PERSONAS_TB',
+        I.PER_ID,
+        CASE
+            WHEN @Origen IS NOT NULL THEN 'Se us� ' + @Origen + ' y MODIFICAR_PERSONA_TR.'
+            ELSE 'Se us� MODIFICAR_PERSONA_TR.'
+        END,
+        '[ Identificacion: ' + D.PER_Identificacion + 
+        ' | Nombre Completo: ' + D.PER_NombreCompleto + 
+        ' | Teléfono: ' + COALESCE(D.PER_Telefono, 'N/A') + 
+        ' | Correo: ' + COALESCE(D.PER_Correo, 'N/A') + 
+        ' | Dirección: ' + COALESCE(D.PER_Direccion, 'N/A') + 
+        ' | Tipo Persona: ' + TP.TIPO_PER_Nombre + 
+        ' | Estado: ' + CASE WHEN D.PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Identificacion: ' + I.PER_Identificacion + 
+        ' | Nombre Completo: ' + I.PER_NombreCompleto + 
+        ' | Teléfono: ' + COALESCE(I.PER_Telefono, 'N/A') + 
+        ' | Correo: ' + COALESCE(I.PER_Correo, 'N/A') + 
+        ' | Dirección: ' + COALESCE(I.PER_Direccion, 'N/A') + 
+        ' | Tipo Persona: ' + TP.TIPO_PER_Nombre + 
+        ' | Estado: ' + CASE WHEN I.PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.PER_ID = I.PER_ID
+    INNER JOIN TIPOS_PERSONAS_TB TP
+        ON I.PER_TIPO_PER_ID = TP.TIPO_PER_ID;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_PROVEEDOR_TR
+ON DBO.PROVEEDORES_TB
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'PROVEEDORES_TB',
+        I.PRV_ID,
+        CASE
+            WHEN @Origen IS NOT NULL 
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_PROVEEDOR_TR.'
+            ELSE 
+                'Se usó REGISTRAR_PROVEEDOR_TR.'
+        END,
+        NULL,
+        '[ Proveedor : ' + P.PER_NombreCompleto + 
+        ' | Estado: ' + CASE WHEN I.PRV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I
+        INNER JOIN PERSONAS_TB P
+            ON I.PRV_PER_ID = P.PER_ID;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_PROVEEDOR_TR
+ON DBO.PROVEEDORES_TB
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB
+    (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'PROVEEDORES_TB',
+        I.PRV_ID,
+        CASE
+            WHEN @Origen IS NOT NULL THEN 'Se us� ' + @Origen + ' y MODIFICAR_PROVEEDOR_TR.'
+            ELSE 'Se us� MODIFICAR_PROVEEDOR_TR.'
+        END,
+        '[ Proveedor : ' + P.PER_NombreCompleto + 
+        ' | Estado: ' + CASE WHEN D.PRV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Proveedor : ' + P.PER_NombreCompleto + 
+        ' | Estado: ' + CASE WHEN I.PRV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.PRV_ID = I.PRV_ID
+    INNER JOIN PERSONAS_TB P
+        ON I.PRV_PER_ID = P.PER_ID;
+END;
+GO
