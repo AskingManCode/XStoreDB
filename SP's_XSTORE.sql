@@ -2417,13 +2417,68 @@ END;
 GO
 
 
-/*CREATE OR ALTER PROCEDURE CONSULTAR_NOMBRE_PROVEEDORES
-    @NombreUsuario  VARCHAR(75),    -- Responsable
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_NOMBRES_PROVEEDORES_SP -- Para ComboBox
+    @NombreUsuario  VARCHAR(75)     -- Responsable
 AS
 BEGIN
-    
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+
+    BEGIN TRY
+
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Solo nombres de proveedores activos
+        SELECT 
+            P.PER_NombreCompleto AS [Nombre Proveedor],
+            PRV.PRV_Estado AS [Estado]
+        FROM DBO.PERSONAS_TB P
+        INNER JOIN DBO.PROVEEDORES_TB PRV
+            ON P.PER_ID = PRV.PRV_PER_ID
+        ORDER BY P.PER_NombreCompleto;
+
+        -- Auditoría
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'PROVEEDORES_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_NOMBRES_PROVEEDORES_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
 END;
-GO*/
+GO
 
 EXEC CONSULTAR_TIPOS_PERSONAS_SP
     @NombreUsuario = 'AskingMansOz';
