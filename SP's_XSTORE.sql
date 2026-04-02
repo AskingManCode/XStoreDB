@@ -15,7 +15,7 @@ GO
 */
 
 ---- ****** PROCEDIMIENTOS ALMACENADOS ****** ----
-CREATE OR ALTER PROCEDURE DBO.REGISTRAR_AUDITORIA_SP
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_AUDITORIA_SP -- No agregar al API
 	@Persona_ID		INT, -- ID de la Persona Responsable
 	@Accion			VARCHAR(25),
 	@TablaAfectada	VARCHAR(75),
@@ -487,7 +487,7 @@ GO
 
 
 
-CREATE OR ALTER PROCEDURE DBO.REGISTRAR_SESION_SP
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_SESION_SP -- No agregar al API
     @CreadorCuenta  VARCHAR(75)  = NULL, -- NULL = auto-registro, sino lo crea un Administrador
     @Persona_ID     INT,
     @NombreUsuario  VARCHAR(75),
@@ -2154,16 +2154,16 @@ CREATE OR ALTER PROCEDURE DBO.REGISTRAR_USUARIO_SP
     @EsProveedor        BIT             = 0         -- 1 = Registrar solo como proveedor (sin sesión)
 AS
 BEGIN
-
+ 
     SET XACT_ABORT ON;
     SET NOCOUNT ON;
-
+ 
     DECLARE @Persona_ID_Ejecutor   INT;
     DECLARE @Persona_ID_Nueva      INT;
     DECLARE @Tipo_Per_ID           INT;
     DECLARE @Rol_Normalizado       VARCHAR(50);
     DECLARE @TipoPersonaNombre     VARCHAR(50);
-
+ 
     -- Normalización
     SET @Identificacion  = TRIM(ISNULL(@Identificacion, ''));
     SET @NombreCompleto  = TRIM(ISNULL(@NombreCompleto, ''));
@@ -2172,36 +2172,42 @@ BEGIN
     SET @Correo          = NULLIF(TRIM(@Correo), '');
     SET @NewUser         = TRIM(ISNULL(@NewUser, ''));
     SET @Rol_Normalizado = UPPER(TRIM(ISNULL(@NombreRol, '')));
-
+ 
     BEGIN TRY
-
+ 
         BEGIN TRANSACTION;
-
+ 
         -- Validaciones de parámetros obligatorios
         IF LEN(@Identificacion) < 9
         BEGIN
             RAISERROR('Error: La identificación debe tener al menos 9 caracteres.', 16, 1);
             RETURN;
         END;
-
+ 
         IF LEN(@NombreCompleto) = 0
         BEGIN
             RAISERROR('Error: El nombre completo no puede estar vacío.', 16, 1);
             RETURN;
         END;
-
+ 
         IF @EsProveedor = 0 AND LEN(@NewUser) = 0
         BEGIN
             RAISERROR('Error: El nombre de usuario no puede estar vacío.', 16, 1);
             RETURN;
         END;
-
+ 
         IF @EsProveedor = 0 AND LEN(@PasswordHash) = 0
         BEGIN
             RAISERROR('Error: La contraseña no puede estar vacía.', 16, 1);
             RETURN;
         END;
-
+        
+        IF @EsProveedor = 1 AND LEN(@Rol_Normalizado) > 0
+        BEGIN
+            RAISERROR('Error: Al registrar un proveedor puro (@EsProveedor = 1), no se debe especificar un rol.', 16, 1);
+            RETURN;
+        END;
+ 
         -- Validación de permisos y tipo de registro
         IF @NombreUsuario IS NULL
         BEGIN
@@ -2211,7 +2217,7 @@ BEGIN
                 RAISERROR('Error: El auto-registro solo está permitido para el rol Cliente.', 16, 1);
                 RETURN;
             END;
-
+ 
             -- Para auto-registro, quién ejecutó el SP será la persona misma que se registre (después de crearla) o Sistema (1)
             SET @Persona_ID_Ejecutor = 1; -- Sistema como fallback para la creación inicial
         END
@@ -2225,19 +2231,19 @@ BEGIN
             WHERE S.SESION_NombreUsuario = @NombreUsuario
                 AND S.SESION_Estado = 1
                 AND R.ROL_Nombre = 'Administrador';
-
+ 
             IF @Persona_ID_Ejecutor IS NULL
             BEGIN
                 RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos de Administrador.', 16, 1, @NombreUsuario);
                 RETURN;
             END;
         END;
-
+ 
         -- Verificar si la persona ya existe por identificación
         SELECT @Persona_ID_Nueva = PER_ID 
         FROM DBO.PERSONAS_TB 
         WHERE PER_Identificacion = @Identificacion;
-
+ 
         -- Caso: Persona existe y es proveedor que quiere ser cliente
         IF @Persona_ID_Nueva IS NOT NULL
         BEGIN
@@ -2247,14 +2253,14 @@ BEGIN
                 RAISERROR('Error: Esta persona ya tiene una cuenta registrada en el sistema.', 16, 1);
                 RETURN;
             END;
-
+ 
             -- Es proveedor, solo puede registrarse como Cliente
             IF @Rol_Normalizado != 'CLIENTE'
             BEGIN
                 RAISERROR('Error: Un proveedor existente solo puede registrarse como Cliente.', 16, 1);
                 RETURN;
             END;
-
+ 
             -- Verificar que no tenga ya sesión con este rol
             IF EXISTS(
                 SELECT 1 
@@ -2267,19 +2273,19 @@ BEGIN
                 RAISERROR('Error: Esta persona ya tiene una sesión registrada con el rol [%s].', 16, 1, @NombreRol);
                 RETURN;
             END;
-
-            -- Crear sesión para el proveedor existente usando REGISTRAR_SESION_SP
+ 
+            -- Crear una nueva sesión para la persona registrada
             EXEC DBO.REGISTRAR_SESION_SP
-                @CreadorCuenta  = @NombreUsuario,      -- NULL si es auto-registro, o Nombre de un Administrador
+                @CreadorCuenta  = @NombreUsuario,
                 @Persona_ID     = @Persona_ID_Nueva,
                 @NombreUsuario  = @NewUser,
                 @PasswordHash   = @PasswordHash,
                 @NombreRol      = @NombreRol;
-
+ 
             COMMIT;
             RETURN;
         END;
-
+ 
         -- Caso de que persona no exista
         -- Determinar el Tipo de Persona según el Rol
         SET @TipoPersonaNombre = CASE @Rol_Normalizado
@@ -2288,28 +2294,28 @@ BEGIN
                                     WHEN 'ADMINISTRADOR' THEN 'Administrador'
                                     ELSE NULL
                                  END;
-
+ 
         IF @TipoPersonaNombre IS NULL
         BEGIN
             RAISERROR('Error: Rol [%s] no válido. Use: Administrador, Vendedor o Cliente.', 16, 1, @NombreRol);
             RETURN;
         END;
-
+ 
         -- Obtener el ID del Tipo de Persona
         SELECT @Tipo_Per_ID = TIPO_PER_ID 
         FROM DBO.TIPOS_PERSONAS_TB 
         WHERE TIPO_PER_Nombre = @TipoPersonaNombre;
-
+ 
         IF @Tipo_Per_ID IS NULL
         BEGIN
             RAISERROR('Error: Tipo de persona [%s] no encontrado en el sistema.', 16, 1, @TipoPersonaNombre);
             RETURN;
         END;
-
+ 
         -- Prepara contexto para auditoría
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID_Ejecutor;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_USUARIO_SP';
-
+ 
         -- Insertar Persona
         INSERT INTO DBO.PERSONAS_TB (
             PER_Identificacion,
@@ -2327,52 +2333,48 @@ BEGIN
             @Direccion,
             @Tipo_Per_ID
         );
-
+ 
         SET @Persona_ID_Nueva = SCOPE_IDENTITY();
-
+ 
         -- Caso: Es proveedor (solo insertar en PROVEEDORES_TB, no crear sesión)
         IF @EsProveedor = 1
         BEGIN
             INSERT INTO DBO.PROVEEDORES_TB (PRV_PER_ID)
             VALUES (@Persona_ID_Nueva);
-
-            -- Limpiar contexto
+ 
             EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
             EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
-
+ 
             COMMIT;
             RETURN;
         END;
-
-        -- Caso: Crear sesión para el nuevo usuario
-
+        
         EXEC DBO.REGISTRAR_SESION_SP
-            @CreadorCuenta  = @NombreUsuario,      -- NULL si es auto-registro
+            @CreadorCuenta  = @NombreUsuario,
             @Persona_ID     = @Persona_ID_Nueva,
             @NombreUsuario  = @NewUser,
             @PasswordHash   = @PasswordHash,
             @NombreRol      = @NombreRol;
-
+ 
         COMMIT;
-
-        -- Limpiar contexto
+ 
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
-
+ 
     END TRY
     BEGIN CATCH
-
+ 
         IF @@TRANCOUNT > 0 ROLLBACK;
-
+ 
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
-
+ 
         DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
         DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
         DECLARE @ErrorState     INT             = ERROR_STATE();
-
+ 
         RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
-
+ 
     END CATCH
 END;
 GO
@@ -2387,88 +2389,14 @@ BEGIN
 END;
 GO*/
 
-
-
-CREATE OR ALTER 
-
-
-
--- CRUD ROLES
-EXEC REGISTRAR_ROL_SP
-	@NombreUsuario = 'AskingMansOz',
-	@Nombre = 'Vendedor',
-	@Accesos = 'Pantalla_Roja, Pantalla Azul, Pantalla XD';
-
-EXEC CONSULTAR_ROLES_SP
-	@NombreUsuario = 'AskingMansOz';
-
-EXEC MODIFICAR_ROL_SP
-	@NombreUsuario = 'AskingMansOz',
-	@Nombre = 'Administrador', 
-	@NuevoNombre = 'Cliente',
-	@NuevoEstado = 0,
-	@NuevosAccesos = 'Pantalla_Registro_Usuario, Pantalla_Comprar_Productos, Otras pantallas';
-
-EXEC CONSULTAR_TIPOS_PRODUCTOS_SP
-    @NombreUsuario = 'AskingMansOz';
-
-EXEC REGISTRAR_TIPO_PRODUCTO_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Televisor';
-
-EXEC MODIFICAR_TIPO_PRODUCTO_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Gorro',
-    --@NuevoNombre = 'Smartwatch',
-    @NuevoEstado = 1;
-
-EXEC CONSULTAR_MARCAS_PRODUCTOS_SP
-    @NombreUsuario = 'AskingMansOz';
-
-EXEC REGISTRAR_MARCA_PRODUCTO_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Apple';
-
-EXEC MODIFICAR_MARCA_PRODUCTO_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Samsung',
-    --@NuevoNombre = 'Apple',
-    @NuevoEstado = 0;
-
-EXEC CONSULTAR_UBICACIONES_SP
-    @NombreUsuario = 'AskingMansOz';
-
-EXEC REGISTRAR_UBICACION_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'XSTORE Cartago';
-
-EXEC MODIFICAR_UBICACION_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Bodega Central',
-    @NuevoNombre = 'Bodega Central',
-    @NuevoEstado = 1;
-
-EXEC CONSULTAR_CAT_DESCUENTOS_SP
-    @NombreUsuario = 'AskingMansOz';
-
-EXEC REGISTRAR_CAT_DESCUENTO_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Navideño';
-
-EXEC MODIFICAR_CAT_DESCUENTO_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Navideño',
-    @NuevoNombre = 'Navideño',
-    @NuevoEstado = 1;
-
 EXEC CONSULTAR_TIPOS_PERSONAS_SP
     @NombreUsuario = 'AskingMansOz';
 
 EXEC REGISTRAR_TIPO_PERSONA_SP
     @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Cliente Fecuente',
-    @DescuentoPct = 10,
-    @MontoMeta = 500000;
+    @Nombre = 'Vendedor',
+    @DescuentoPct = 15,
+    @MontoMeta = 0;
 
 EXEC MODIFICAR_TIPO_PERSONA_SP
     @NombreUsuario = 'AskingMansOz',

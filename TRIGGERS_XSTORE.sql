@@ -25,8 +25,6 @@ BEGIN
     ELSE
         SET @Accion = 'DELETE';
  
-    ROLLBACK TRANSACTION; 
- 
     RAISERROR ('SEGURIDAD: La tabla de Auditoría es INMUTABLE. No se permite [%s].', 16, 1, @Accion);
  
 END;
@@ -658,13 +656,13 @@ AFTER UPDATE
 AS
 BEGIN
     SET NOCOUNT ON;
-
+ 
     DECLARE @Persona_ID INT = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
     DECLARE @Origen VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
-
+ 
     IF @Persona_ID IS NULL
         SET @Persona_ID = 1;
-
+ 
     INSERT INTO DBO.AUDITORIAS_TB
     (
         AUD_PER_ID,
@@ -681,8 +679,8 @@ BEGIN
         'PERSONAS_TB',
         I.PER_ID,
         CASE
-            WHEN @Origen IS NOT NULL THEN 'Se us� ' + @Origen + ' y MODIFICAR_PERSONA_TR.'
-            ELSE 'Se us� MODIFICAR_PERSONA_TR.'
+            WHEN @Origen IS NOT NULL THEN 'Se usó ' + @Origen + ' y MODIFICAR_PERSONA_TR.'
+            ELSE 'Se usó MODIFICAR_PERSONA_TR.'
         END,
         '[ Identificacion: ' + D.PER_Identificacion + 
         ' | Nombre Completo: ' + D.PER_NombreCompleto + 
@@ -781,8 +779,8 @@ BEGIN
         'PROVEEDORES_TB',
         I.PRV_ID,
         CASE
-            WHEN @Origen IS NOT NULL THEN 'Se us� ' + @Origen + ' y MODIFICAR_PROVEEDOR_TR.'
-            ELSE 'Se us� MODIFICAR_PROVEEDOR_TR.'
+            WHEN @Origen IS NOT NULL THEN 'Se usó ' + @Origen + ' y MODIFICAR_PROVEEDOR_TR.'
+            ELSE 'Se usó MODIFICAR_PROVEEDOR_TR.'
         END,
         '[ Proveedor : ' + P.PER_NombreCompleto + 
         ' | Estado: ' + CASE WHEN D.PRV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
