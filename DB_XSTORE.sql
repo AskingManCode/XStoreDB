@@ -56,7 +56,7 @@ BEGIN
 	    PER_Identificacion VARCHAR(50) NOT NULL, -- Cédula Identidad, Cédula Juridica
 	    PER_NombreCompleto VARCHAR(150) NOT NULL,
 	    PER_Telefono VARCHAR(25) NULL,
-	    x    VARCHAR(150) NULL,
+	    PER_Correo VARCHAR(150) NULL,
 	    PER_Direccion VARCHAR(175) NULL,
 	    PER_FechaRegistro DATETIME2 NOT NULL
             CONSTRAINT DF_PER_FechaRegistro 

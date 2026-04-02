@@ -799,3 +799,89 @@ BEGIN
         ON I.PRV_PER_ID = P.PER_ID;
 END;
 GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_ESTADO_ENTREGA_TR
+ON DBO.ESTADOS_ENTREGAS_TB
+AFTER INSERT
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+ 
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'ESTADOS_ENTREGAS_TB',
+        I.EST_ENT_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_ESTADO_ENTREGA_TR.'
+            ELSE
+                'Se usó REGISTRAR_ESTADO_ENTREGA_TR.'
+        END,
+        NULL,
+        '[ Nombre: ' + I.EST_ENT_Nombre + ' | Estado: ' + CASE WHEN I.EST_ENT_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_ESTADO_ENTREGA_TR
+ON DBO.ESTADOS_ENTREGAS_TB
+AFTER UPDATE
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+ 
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+ 
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'ESTADOS_ENTREGAS_TB',
+        I.EST_ENT_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_ESTADO_ENTREGA_TR.'
+            ELSE
+                'Se usó MODIFICAR_ESTADO_ENTREGA_TR.'
+        END,
+        '[ Nombre: ' + D.EST_ENT_Nombre + ' | Estado: ' + CASE WHEN D.EST_ENT_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre: ' + I.EST_ENT_Nombre + ' | Estado: ' + CASE WHEN I.EST_ENT_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.EST_ENT_ID = I.EST_ENT_ID;
+END;
+GO

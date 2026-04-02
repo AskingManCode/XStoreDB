@@ -2604,7 +2604,266 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_ESTADOS_ENTREGAS_SP
+    @NombreUsuario  VARCHAR(75)     -- Responsable
+AS
+BEGIN
+ 
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT;
+ 
+    BEGIN TRY
+ 
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        SELECT
+            EST_ENT_Nombre AS [Estado Entrega]
+            , CASE
+                WHEN EST_ENT_Estado = 1
+                    THEN 'Activo'
+                ELSE
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.ESTADOS_ENTREGAS_TB;
+ 
+        -- Auditoría
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'ESTADOS_ENTREGAS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = 'Se usó CONSULTAR_ESTADOS_ENTREGAS_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
 
+
+
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_ESTADO_ENTREGA_SP
+    @NombreUsuario  VARCHAR(75),    -- Responsable
+    @Nombre         VARCHAR(50)     -- Nombre del nuevo estado
+AS
+BEGIN
+ 
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID INT;
+    SET @Nombre = TRIM(ISNULL(@Nombre, ''));
+ 
+    BEGIN TRY
+ 
+        BEGIN TRANSACTION;
+ 
+        -- Validación de permisos y obtención de ID
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        IF LEN(@Nombre) <= 0
+        BEGIN
+            RAISERROR('Error: El nombre del estado de entrega no es válido.', 16, 1);
+            RETURN;
+        END;
+ 
+        IF EXISTS (
+            SELECT 1
+            FROM DBO.ESTADOS_ENTREGAS_TB
+            WHERE EST_ENT_Nombre = @Nombre
+        )
+        BEGIN
+            RAISERROR('Error: El estado de entrega [%s] ya se encuentra registrado.', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_ESTADO_ENTREGA_SP';
+ 
+        INSERT INTO DBO.ESTADOS_ENTREGAS_TB (EST_ENT_Nombre)
+        VALUES (@Nombre);
+ 
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        IF @@TRANCOUNT > 0 ROLLBACK;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
+
+
+
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_ESTADO_ENTREGA_SP
+    @NombreUsuario  VARCHAR(75),            -- Responsable
+    @Nombre         VARCHAR(50),            -- Nombre actual del estado a modificar
+    @NuevoNombre    VARCHAR(50)  = NULL,
+    @NuevoEstado    BIT          = NULL
+AS
+BEGIN
+ 
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+ 
+    DECLARE @Persona_ID   INT;
+    DECLARE @EST_ENT_ID   INT;
+ 
+    SET @Nombre      = TRIM(ISNULL(@Nombre, ''));
+    SET @NuevoNombre = TRIM(ISNULL(@NuevoNombre, ''));
+ 
+    BEGIN TRY
+ 
+        BEGIN TRANSACTION;
+ 
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+ 
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+ 
+        -- Obtener ID del estado a modificar
+        SELECT @EST_ENT_ID = EST_ENT_ID
+        FROM DBO.ESTADOS_ENTREGAS_TB
+        WHERE EST_ENT_Nombre = @Nombre;
+ 
+        IF @EST_ENT_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El estado de entrega [%s] no existe.', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        -- Detectar si no se pasó ningún cambio
+        IF LEN(@NuevoNombre) = 0
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para el estado de entrega [%s].', 16, 1, @Nombre);
+            RETURN;
+        END;
+ 
+        -- Validar que el nuevo nombre no esté en uso por otro estado
+        IF LEN(@NuevoNombre) > 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.ESTADOS_ENTREGAS_TB
+                WHERE EST_ENT_Nombre = @NuevoNombre
+                    AND EST_ENT_ID != @EST_ENT_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe un estado de entrega con el nombre [%s].', 16, 1, @NuevoNombre);
+                RETURN;
+            END;
+        END;
+ 
+        -- Validación para desactivar estado en uso (opcional, comentado como en tus otros SP)
+        /*
+        IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.ENC_ENTREGAS_CLIENTES_TB
+                WHERE ENC_ENT_CLI_EST_ENT_ID = @EST_ENT_ID
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar el estado porque hay entregas asignadas.', 16, 1);
+                RETURN;
+            END;
+        END;
+        */
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_ESTADO_ENTREGA_SP';
+ 
+        UPDATE DBO.ESTADOS_ENTREGAS_TB
+        SET
+            EST_ENT_Nombre = ISNULL(NULLIF(@NuevoNombre, ''), EST_ENT_Nombre),
+            EST_ENT_Estado = ISNULL(@NuevoEstado, EST_ENT_Estado)
+        WHERE EST_ENT_ID = @EST_ENT_ID;
+ 
+        COMMIT;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+    END TRY
+    BEGIN CATCH
+ 
+        IF @@TRANCOUNT > 0 ROLLBACK;
+ 
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+ 
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+ 
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+ 
+    END CATCH
+END;
+GO
 
 
 
@@ -2669,10 +2928,10 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	CONSULTAR_INVENTARIOS_PROVEEDORES_SP (Select y join por proveedores)
 	MODIFICAR_STOCK_MINIMO_SP (Update StockMinimo de un producto)
 
-	CONSULTAR_PRODUCTOS_SP (select con joins)
-	CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
-	CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
-	CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
+	CONSULTAR_PRODUCTOS_SP (select con joins) -- Aplicar Filtros
+	FILTRO CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
+	FILTRO CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
+	FILTRO CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
 
 	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento null porque apenas se crea el producto, se busca en inventario y en ubicación y 
 								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
@@ -2687,15 +2946,16 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	CONSULTAR_CAT_DESCUENTO_PRODUCTO_SP (Select categoría de descuento, el descuento y que producto)
 	-- VIEW CONSULTAR_PRODUCTOS_SIN_DESCUENTO_SP (Select productos que no tengan descuentos aplicados)
 	-- VIEW CONSULTAR_PRODUCTOS_CON_DESCUENTO_SP (Selecy productos que si tengan descuentos aplicados y cuanto y por cuanto tiempo)
+
 	REGISTRAR_DESCUENTO_SP (Incluye la categoría_Descuento)
 	MODIFICAR_DESCUENTO_SP (Update Descuentos)
-	CAMBIAR_ESTADO_DESCUENTO_SP (Activo o Inactivo)
-	APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios)
-	QUITAR_DESCUENTO_PRODUCTO_SP (Se aplica un null a la referencia del descuento que tenía antes)
+
+	APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios) -- Va en Registrar Productos
+	QUITAR_DESCUENTO_PRODUCTO_SP (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 	X REGISTRAR_SESION_SP
-	VERIFICAR_SESION_SP (Devuelve el nombre de Usuario para mostrarlo en la información de cuenta, sino, error, verifica que el usuario exista)
+	X VERIFICAR_SESION_SP (Devuelve el nombre de Usuario para mostrarlo en la información de cuenta, sino, error, verifica que el usuario exista)
 	MODIFICAR_SESION_SP (Cambia contraseña si se cambia o nombre de usuario, Recordar NombreUsuario es UNIQUE)
 
 	-------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -2721,9 +2981,9 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	3. Los triggers tienen que funcionar con sp y sin sp, osea auditoría real sin margen de error.
 	-------------------------------------------------------------------------------------------------------------------------------------------------------
 
-	CONSULTAR_ESTADOS_ENTREGA_SP (Select simple estados_entrega)
-	REGISTRAR_ESTADO_ENTREGA_SP (Insert estados_entrega)
-	MODIFICAR_ESTADO_ENTREGA_SP (Activar o Inactivar)
+	X CONSULTAR_ESTADOS_ENTREGA_SP (Select simple estados_entrega)
+	X REGISTRAR_ESTADO_ENTREGA_SP (Insert estados_entrega)
+	X MODIFICAR_ESTADO_ENTREGA_SP (Activar o Inactivar)
 
 	FACTURAR_CLIENTE_SP (crear encabezados, referenciar cliente, agregar entrega si aplica y referenciar el estado y detallar factura, 
 						agregar productos, verificar descuentos, aplicar descuentos si existen, 
