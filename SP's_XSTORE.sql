@@ -644,6 +644,127 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.VERIFICAR_SESION_SP
+    @NombreUsuario  VARCHAR(75),
+    @PasswordHash   VARCHAR(255)
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Sesion_ID      INT;
+    DECLARE @Persona_ID     INT;
+    DECLARE @Rol_Nombre     VARCHAR(50);
+    DECLARE @Accesos        VARCHAR(500);
+    DECLARE @Estado_Sesion  BIT;
+    DECLARE @Estado_Persona BIT;
+    --DECLARE @Estado_Rol     BIT;
+
+    BEGIN TRY
+
+        -- Normalización
+        SET @NombreUsuario = TRIM(ISNULL(@NombreUsuario, ''));
+        SET @PasswordHash  = ISNULL(@PasswordHash, '');
+
+        -- Validar parámetros
+        IF LEN(@NombreUsuario) = 0
+        BEGIN
+            RAISERROR('Error: El nombre de usuario no puede estar vacío.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@PasswordHash) = 0
+        BEGIN
+            RAISERROR('Error: La contraseña no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        -- Buscar sesión con todas las validaciones
+        SELECT 
+            @Sesion_ID = S.SESION_ID,
+            @Persona_ID = S.SESION_PER_ID,
+            @Rol_Nombre = R.ROL_Nombre,
+            @Accesos = R.ROL_Accesos,
+            @Estado_Sesion = S.SESION_Estado,
+            @Estado_Persona = P.PER_Estado
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        INNER JOIN DBO.PERSONAS_TB P
+            ON S.SESION_PER_ID = P.PER_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_PwdHash = @PasswordHash;
+
+        -- Validar existencia
+        IF @Sesion_ID IS NULL
+        BEGIN
+            RAISERROR('Error: Credenciales incorrectas.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar estados
+        IF @Estado_Persona = 0
+        BEGIN
+            RAISERROR('Error: La persona está inactiva. Contacte al administrador.', 16, 1);
+            RETURN;
+        END;
+
+        IF @Estado_Sesion = 0
+        BEGIN
+            RAISERROR('Error: La cuenta está desactivada. Contacte al administrador.', 16, 1);
+            RETURN;
+        END;
+
+        /*IF @Estado_Rol = 0
+        BEGIN
+            RAISERROR('Error: El rol asignado está inactivo. Contacte al administrador.', 16, 1);
+            RETURN;
+        END;*/
+
+        -- Éxito: Retornar datos del usuario
+        SELECT 
+            S.SESION_NombreUsuario AS [Nombre Usuario],
+            P.PER_NombreCompleto AS [Nombre Completo],
+            P.PER_Correo AS [Correo],
+            R.ROL_Nombre AS [Rol],
+            R.ROL_Accesos AS [Accesos]
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.PERSONAS_TB P
+            ON S.SESION_PER_ID = P.PER_ID
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_ID = @Sesion_ID;
+
+        -- Auditoría de login exitoso
+        BEGIN TRY
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'SESIONES_TB',
+                @FilaAfectada   = @Sesion_ID,
+                @Descripcion    = 'Se usí VERIFICAR_SESION_SP.',
+                @Antes          = NULL,
+                @Despues        = NULL
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no interrumpe el login
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_TIPOS_PRODUCTOS_SP
     @NombreUsuario  VARCHAR(75)    -- Responsable
 AS 
@@ -2417,6 +2538,7 @@ END;
 GO
 
 
+
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_NOMBRES_PROVEEDORES_SP -- Para ComboBox
     @NombreUsuario  VARCHAR(75)     -- Responsable
 AS
@@ -2480,6 +2602,12 @@ BEGIN
 END;
 GO
 
+
+
+
+
+
+
 EXEC CONSULTAR_TIPOS_PERSONAS_SP
     @NombreUsuario = 'AskingMansOz';
 
@@ -2500,6 +2628,9 @@ EXEC MODIFICAR_TIPO_PERSONA_SP
 EXEC CONSULTAR_PERSONAS_SP
     @NombreUsuario = 'AskingMansOz',
     @Filtro = 'ADMINISTRADORES';
+
+EXEC DBO.CONSULTAR_NOMBRES_PROVEEDORES_SP
+    @NombreUsuario = 'AskingMansOz';
 
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',

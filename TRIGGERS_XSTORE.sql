@@ -667,8 +667,7 @@ BEGIN
     IF @Persona_ID IS NULL
         SET @Persona_ID = 1;
  
-    INSERT INTO DBO.AUDITORIAS_TB
-    (
+    INSERT INTO DBO.AUDITORIAS_TB (
         AUD_PER_ID,
         AUD_Accion,
         AUD_TablaAfectada,
@@ -683,8 +682,10 @@ BEGIN
         'PERSONAS_TB',
         I.PER_ID,
         CASE
-            WHEN @Origen IS NOT NULL THEN 'Se usó ' + @Origen + ' y MODIFICAR_PERSONA_TR.'
-            ELSE 'Se usó MODIFICAR_PERSONA_TR.'
+            WHEN @Origen IS NOT NULL 
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_PERSONA_TR.'
+            ELSE 
+                'Se usó MODIFICAR_PERSONA_TR.'
         END,
         '[ Identificacion: ' + D.PER_Identificacion + 
         ' | Nombre Completo: ' + D.PER_NombreCompleto + 
@@ -767,8 +768,7 @@ BEGIN
     IF @Persona_ID IS NULL
         SET @Persona_ID = 1;
 
-    INSERT INTO DBO.AUDITORIAS_TB
-    (
+    INSERT INTO DBO.AUDITORIAS_TB (
         AUD_PER_ID,
         AUD_Accion,
         AUD_TablaAfectada,
@@ -783,8 +783,10 @@ BEGIN
         'PROVEEDORES_TB',
         I.PRV_ID,
         CASE
-            WHEN @Origen IS NOT NULL THEN 'Se usó ' + @Origen + ' y MODIFICAR_PROVEEDOR_TR.'
-            ELSE 'Se usó MODIFICAR_PROVEEDOR_TR.'
+            WHEN @Origen IS NOT NULL 
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_PROVEEDOR_TR.'
+            ELSE 
+                'Se usó MODIFICAR_PROVEEDOR_TR.'
         END,
         '[ Proveedor : ' + P.PER_NombreCompleto + 
         ' | Estado: ' + CASE WHEN D.PRV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
