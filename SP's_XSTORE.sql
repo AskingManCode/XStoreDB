@@ -141,6 +141,7 @@ BEGIN
 	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; -- Evita que se bloqueen otras tablas
 	
 	DECLARE @Persona_ID INT;
+    DECLARE @Descripcion VARCHAR(250);
 
 	BEGIN TRY
 		
@@ -175,13 +176,21 @@ BEGIN
             AND (@TablaFiltro IS NULL OR A.AUD_TablaAfectada = UPPER(TRIM(@TablaFiltro)))
         ORDER BY A.AUD_FechaHora DESC; -- Fechas recientes primero
 		
+        SET @Descripcion = 'Se usó CONSULTAR_AUDITORIAS_SP' + 
+            CASE 
+                WHEN @TablaFiltro != '' 
+                    THEN ' con filtro [' + @TablaFiltro + '].'
+                ELSE 
+                    ' sin filtro específico (Todos).'
+            END;
+
 		BEGIN TRY
 			EXEC DBO.REGISTRAR_AUDITORIA_SP
 				@Persona_ID		= @Persona_ID,
 				@Accion			= 'SELECT',
 				@TablaAfectada	= 'AUDITORIAS_TB',
 				@FilaAfectada	= 0,
-				@Descripcion	= 'Se usó CONSULTAR_AUDITORIAS_SP.',
+				@Descripcion	= @Descripcion,
 				@Antes			= NULL,
 				@Despues		= NULL
 		END TRY
@@ -2059,8 +2068,6 @@ BEGIN
                 OR P.PER_Telefono LIKE @BusquedaLike)
         UNION ALL
         -- Proveedores 
-            -- Si filtro es 'PROVEEDORES' → muestra TODOS los proveedores
-            -- Si filtro es '' → muestra solo proveedores que NO tienen sesión (evitar duplicados)
         SELECT 
             P.PER_ID AS [ID Persona]
             , P.PER_Identificacion AS [Identificación]
@@ -2087,12 +2094,8 @@ BEGIN
         WHERE P.PER_ID != 1  -- Reservado para SISTEMA
             AND (@Filtro IN ('PROVEEDORES', '') -- Filtro específico para proveedores
                 AND (
-                    @Filtro = 'PROVEEDORES'  -- Si filtro es Proveedores, mostrar todos
-                    OR NOT EXISTS (          -- Si filtro es vacío, mostrar solo proveedores sin cuenta
-                        SELECT 1 
-                        FROM DBO.SESIONES_TB S2 
-                        WHERE S2.SESION_PER_ID = P.PER_ID
-                    )
+                    @Filtro = 'PROVEEDORES'  
+                        OR @Filtro = ''  -- Siempre mostrar proveedores en filtro vacío también
                 ))
             AND (@Busqueda IS NULL -- Filtro de búsqueda específica
                 OR P.PER_Identificacion LIKE @BusquedaLike
@@ -2107,7 +2110,7 @@ BEGIN
                     WHEN @Filtro != '' 
                         THEN ' con filtro [' + @Filtro + '].'
                     ELSE 
-                        ' sin filtro específico (todos).'
+                        ' sin filtro específico (Todos).'
                 END;
 
             IF @Busqueda IS NOT NULL
@@ -2150,7 +2153,7 @@ CREATE OR ALTER PROCEDURE DBO.REGISTRAR_USUARIO_SP
     @Direccion          VARCHAR(175)    = NULL,     -- Dirección
     @NewUser            VARCHAR(75),                -- Nombre de usuario para la sesión
     @PasswordHash       VARCHAR(255),               -- Contraseña hasheada
-    @NombreRol          VARCHAR(50),                -- Administrador, Vendedor, Cliente
+    @NombreRol          VARCHAR(50),                -- Administrador, Vendedor, Cliente, Null(Si es vendedor)
     @EsProveedor        BIT             = 0         -- 1 = Registrar solo como proveedor (sin sesión)
 AS
 BEGIN
@@ -2218,8 +2221,9 @@ BEGIN
                 RETURN;
             END;
  
-            -- Para auto-registro, quién ejecutó el SP será la persona misma que se registre (después de crearla) o Sistema (1)
-            SET @Persona_ID_Ejecutor = 1; -- Sistema como fallback para la creación inicial
+            -- Para auto-registro, el ejecutor del Procedimiento será la persona misma una vez creada
+            -- NULL temporalmente para indicar que no hay ejecutor externo
+            SET @Persona_ID_Ejecutor = NULL;
         END
         ELSE
         BEGIN
@@ -2274,9 +2278,14 @@ BEGIN
                 RETURN;
             END;
  
+            -- CASO ESPECIAL: Proveedor existente crea su propia sesión de cliente
+            -- La persona misma es responsable de la auditoría (similar a auto-registro)
+            EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID_Nueva;
+            EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_USUARIO_SP';
+ 
             -- Crear una nueva sesión para la persona registrada
             EXEC DBO.REGISTRAR_SESION_SP
-                @CreadorCuenta  = @NombreUsuario,
+                @CreadorCuenta  = @NombreUsuario,  -- NULL si es auto-registro, admin si no
                 @Persona_ID     = @Persona_ID_Nueva,
                 @NombreUsuario  = @NewUser,
                 @PasswordHash   = @PasswordHash,
@@ -2295,11 +2304,15 @@ BEGIN
                                     ELSE NULL
                                  END;
  
-        IF @TipoPersonaNombre IS NULL
+        IF @TipoPersonaNombre IS NULL AND @EsProveedor = 0
         BEGIN
             RAISERROR('Error: Rol [%s] no válido. Use: Administrador, Vendedor o Cliente.', 16, 1, @NombreRol);
             RETURN;
         END;
+ 
+        -- Para proveedor, usar 'Cliente Normal' como tipo de persona
+        IF @EsProveedor = 1
+            SET @TipoPersonaNombre = 'Cliente Normal';
  
         -- Obtener el ID del Tipo de Persona
         SELECT @Tipo_Per_ID = TIPO_PER_ID 
@@ -2311,10 +2324,19 @@ BEGIN
             RAISERROR('Error: Tipo de persona [%s] no encontrado en el sistema.', 16, 1, @TipoPersonaNombre);
             RETURN;
         END;
- 
-        -- Prepara contexto para auditoría
-        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID_Ejecutor;
-        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_USUARIO_SP';
+        
+        -- Si hay ejecutor (admin), usarlo. Si no, usa NULL temporalmente
+        IF @Persona_ID_Ejecutor IS NOT NULL
+        BEGIN
+            EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID_Ejecutor;
+        END
+        ELSE
+        BEGIN
+            -- Auto-registro: No hay persona aún, usa 0 y el trigger entiende que debe usar el id de la persona
+            EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', 0;
+        END
+        
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', 'REGISTRAR_USUARIO_SP';
  
         -- Insertar Persona
         INSERT INTO DBO.PERSONAS_TB (
@@ -2334,8 +2356,22 @@ BEGIN
             @Tipo_Per_ID
         );
  
-        SET @Persona_ID_Nueva = SCOPE_IDENTITY();
- 
+        --SET @Persona_ID_Nueva = SCOPE_IDENTITY();
+
+        SELECT @Persona_ID_Nueva = PER_ID
+        FROM DBO.PERSONAS_TB
+        WHERE PER_Identificacion = @Identificacion
+            AND PER_NombreCompleto = @NombreCompleto;
+        
+        -- Si es auto-registro, la persona recién creada es responsable
+        -- Si es admin, mantiene al admin como responsable
+        IF @Persona_ID_Ejecutor IS NULL
+        BEGIN
+            -- Auto-registro: La persona misma es responsable de su sesión
+            EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID_Nueva;
+        END
+
+        -- Si es admin, el contexto ya tiene @Persona_ID_Ejecutor, no cambia
         -- Caso: Es proveedor (solo insertar en PROVEEDORES_TB, no crear sesión)
         IF @EsProveedor = 1
         BEGIN
@@ -2349,6 +2385,7 @@ BEGIN
             RETURN;
         END;
         
+        -- Crear sesión
         EXEC DBO.REGISTRAR_SESION_SP
             @CreadorCuenta  = @NombreUsuario,
             @Persona_ID     = @Persona_ID_Nueva,
@@ -2380,7 +2417,6 @@ END;
 GO
 
 
-
 /*CREATE OR ALTER PROCEDURE CONSULTAR_NOMBRE_PROVEEDORES
     @NombreUsuario  VARCHAR(75),    -- Responsable
 AS
@@ -2408,12 +2444,13 @@ EXEC MODIFICAR_TIPO_PERSONA_SP
 
 EXEC CONSULTAR_PERSONAS_SP
     @NombreUsuario = 'AskingMansOz',
-    @Filtro = '';
+    @Filtro = 'ADMINISTRADORES';
 
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
-    @FechaFiltro = '2026-03-29',
-	@TablaFiltro = 'TIPOS_PRODUCTOS_TB';
+    --@FechaFiltro = '2026-03-29',
+	@TablaFiltro = 'PERSONAS_TB';
+
 
 -- CREATE OR ALTER PROCEDURE 
 

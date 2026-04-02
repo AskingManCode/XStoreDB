@@ -614,6 +614,10 @@ BEGIN
     IF @Persona_ID IS NULL
         SET @Persona_ID = 1;
 
+    IF @Persona_ID = 0
+        SELECT @Persona_ID = I.PER_ID 
+        FROM INSERTED I
+
     INSERT INTO DBO.AUDITORIAS_TB (
         AUD_PER_ID,
         AUD_Accion,
