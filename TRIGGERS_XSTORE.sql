@@ -1012,8 +1012,13 @@ BEGIN
         SET @Persona_ID = 1;
 
     INSERT INTO DBO.AUDITORIAS_TB (
-        AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada,
-        AUD_Descripcion, AUD_Antes, AUD_Despues
+        AUD_PER_ID, 
+        AUD_Accion, 
+        AUD_TablaAfectada, 
+        AUD_FilaAfectada,
+        AUD_Descripcion, 
+        AUD_Antes, 
+        AUD_Despues
     )
     SELECT
         @Persona_ID,
@@ -1064,10 +1069,14 @@ BEGIN
     IF @Persona_ID IS NULL
         SET @Persona_ID = 1;
 
-
     INSERT INTO DBO.AUDITORIAS_TB (
-        AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada,
-        AUD_Descripcion, AUD_Antes, AUD_Despues
+        AUD_PER_ID, 
+        AUD_Accion, 
+        AUD_TablaAfectada, 
+        AUD_FilaAfectada,
+        AUD_Descripcion, 
+        AUD_Antes, 
+        AUD_Despues
     )
     SELECT
         @Persona_ID,
@@ -1110,8 +1119,13 @@ BEGIN
         SET @Persona_ID = 1;
 
     INSERT INTO DBO.AUDITORIAS_TB (
-        AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada,
-        AUD_Descripcion, AUD_Antes, AUD_Despues
+        AUD_PER_ID, 
+        AUD_Accion, 
+        AUD_TablaAfectada, 
+        AUD_FilaAfectada,
+        AUD_Descripcion, 
+        AUD_Antes, 
+        AUD_Despues
     )
     SELECT
         @Persona_ID,

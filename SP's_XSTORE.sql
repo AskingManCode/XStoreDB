@@ -2481,12 +2481,7 @@ BEGIN
             @Tipo_Per_ID
         );
  
-        --SET @Persona_ID_Nueva = SCOPE_IDENTITY();
-
-        SELECT @Persona_ID_Nueva = PER_ID
-        FROM DBO.PERSONAS_TB
-        WHERE PER_Identificacion = @Identificacion
-            AND PER_NombreCompleto = @NombreCompleto;
+        SET @Persona_ID_Nueva = SCOPE_IDENTITY();
         
         -- Si es auto-registro, la persona recién creada es responsable
         -- Si es admin, mantiene al admin como responsable
@@ -2571,6 +2566,7 @@ BEGIN
 
         -- Solo nombres de proveedores activos
         SELECT 
+            PRV.PRV_ID,
             P.PER_NombreCompleto AS [Nombre Proveedor],
             PRV.PRV_Estado AS [Estado]
         FROM DBO.PERSONAS_TB P
@@ -3328,6 +3324,290 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_PRODUCTO_SP
+    @NombreUsuario      VARCHAR(75),
+    @RutaImagen         VARCHAR(275),
+    @Descripcion        VARCHAR(150),
+    @TipoProducto       VARCHAR(75),    -- Nombre del tipo de producto
+    @MarcaProducto      VARCHAR(75),    -- Nombre de la marca
+    @NombreProveedor    VARCHAR(150),   -- Nombre Completo del Proveedor
+    @PrecioCompra       DECIMAL(10,2),
+    @PrecioVenta        DECIMAL(10,2),
+    @NombreUbicacion    VARCHAR(75),    -- Ubicación del Inventario
+    @CantidadIngreso    INT,            -- Cantidad a Ingresar al inventario
+    @StockMinimo        INT,            -- Solo aplica si es producto nuevo en esa ubicación
+    @NombreDescuento    VARCHAR(100)    = NULL -- NULL = sin descuento
+AS
+BEGIN
+
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID  INT;
+    DECLARE @TIPO_PRD_ID INT;
+    DECLARE @MARC_PRD_ID INT;
+    DECLARE @PRV_ID      INT;
+    DECLARE @PRD_ID      INT;
+    DECLARE @INV_ID      INT;
+    DECLARE @UBI_INV_ID  INT;
+    DECLARE @DESC_ID     INT;
+    DECLARE @StockActual INT;
+    DECLARE @FechaHoy    DATE = CAST(GETDATE() AS DATE);
+
+    -- Normalizado
+    SET @RutaImagen         = TRIM(ISNULL(@RutaImagen, ''));
+    SET @Descripcion        = TRIM(ISNULL(@Descripcion, ''));
+    SET @TipoProducto       = TRIM(ISNULL(@TipoProducto, ''));
+    SET @MarcaProducto      = TRIM(ISNULL(@MarcaProducto, ''));
+    SET @NombreProveedor    = TRIM(ISNULL(@NombreProveedor, ''));
+    SET @NombreUbicacion    = TRIM(ISNULL(@NombreUbicacion, ''));
+    SET @NombreDescuento    = NULLIF(TRIM(@NombreDescuento), '');
+
+    BEGIN TRY
+        
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Validación de parametros
+        IF LEN(@RutaImagen) = 0
+        BEGIN
+            RAISERROR('Error: La ruta de imagen no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@Descripcion) = 0
+        BEGIN
+            RAISERROR('Error: La descripción del producto no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@TipoProducto) = 0
+        BEGIN
+            RAISERROR('Error: El tipo de producto no puede estar vacío.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@MarcaProducto) = 0
+        BEGIN
+            RAISERROR('Error: La marca no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@NombreProveedor) = 0
+        BEGIN
+            RAISERROR('Error: El nombre del proveedor no puede estar vacío.', 16, 1);
+            RETURN;
+        END;
+
+        IF LEN(@NombreUbicacion) = 0
+        BEGIN
+            RAISERROR('Error: La ubicación no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        IF @PrecioCompra < 0
+        BEGIN
+            RAISERROR('Error: El precio de compra no puede ser negativo.', 16, 1);
+            RETURN;
+        END;
+
+        IF @PrecioVenta <= 0
+        BEGIN
+            RAISERROR('Error: El precio de venta debe ser mayor a 0.', 16, 1);
+            RETURN;
+        END;
+
+        IF @PrecioVenta < @PrecioCompra
+        BEGIN
+            RAISERROR('Error: El precio de venta no puede ser menor al precio de compra.', 16, 1);
+            RETURN;
+        END;
+
+        IF @CantidadIngreso <= 0
+        BEGIN
+            RAISERROR('Error: La cantidad de ingreso debe ser mayor a 0.', 16, 1);
+            RETURN;
+        END;
+
+        IF @StockMinimo < 0
+        BEGIN
+            RAISERROR('Error: El stock mínimo no puede ser negativo.', 16, 1);
+            RETURN;
+        END;
+
+        -- Foreign keys
+        -- Tipo de producto
+        SELECT @TIPO_PRD_ID = TIPO_PRD_ID
+        FROM DBO.TIPOS_PRODUCTOS_TB
+        WHERE TIPO_PRD_Nombre = @TipoProducto
+            AND TIPO_PRD_Estado = 1;
+
+        IF @TIPO_PRD_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El tipo de producto [%s] no existe o está inactivo.', 16, 1, @TipoProducto);
+            RETURN;
+        END;
+
+        -- Marca
+        SELECT @MARC_PRD_ID = MARC_PRD_ID
+        FROM DBO.MARCAS_PRODUCTOS_TB
+        WHERE MARC_PRD_Nombre = @MarcaProducto
+            AND MARC_PRD_Estado = 1;
+
+        IF @MARC_PRD_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La marca [%s] no existe o está inactiva.', 16, 1, @MarcaProducto);
+            RETURN;
+        END
+
+        -- Proveedor
+        SELECT @PRV_ID = PRV.PRV_ID
+        FROM DBO.PROVEEDORES_TB PRV
+        INNER JOIN DBO.PERSONAS_TB P
+            ON PRV.PRV_PER_ID = P.PER_ID
+        WHERE P.PER_NombreCompleto = @NombreProveedor
+            AND PRV.PRV_Estado = 1
+            AND P.PER_Estado = 1;
+
+        IF @PRV_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El proveedor [%s] no existe o está inactivo.', 16, 1, @NombreProveedor);
+            RETURN;
+        END;
+
+        -- Ubicación
+        SELECT @UBI_INV_ID = UBI_INV_ID
+        FROM DBO.UBI_INVENTARIOS_TB
+        WHERE UBI_INV_Nombre = @NombreUbicacion
+            AND UBI_INV_Estado = 1;
+
+        IF @UBI_INV_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La ubicación [%s] no existe o está inactiva.', 16, 1, @NombreUbicacion);
+            RETURN;
+        END;
+
+        -- Descuento (Parametro opcional)
+        IF @NombreDescuento IS NOT NULL
+        BEGIN
+            SELECT @DESC_ID = DESC_ID
+            FROM DBO.DESCUENTOS_TB
+            WHERE DESC_NombreComercial = @NombreDescuento
+                AND DESC_Estado = 1
+                AND @FechaHoy <= DESC_FechaInicio
+                AND @FechaHoy < DESC_FechaFin;
+
+            IF @DESC_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El descuento [%s] no existe, está inactivo o no está vigente.', 16, 1, @NombreDescuento);
+                RETURN;
+            END;            
+        END;
+
+        -- Verificar si el producto ya existe
+        IF EXISTS (
+            SELECT 1
+            FROM DBO.PRODUCTOS_TB
+            WHERE PRD_Descripcion = @Descripcion
+                AND PRD_RutaImagen = @RutaImagen
+                AND PRD_TIPO_PRD_ID = @TIPO_PRD_ID
+                AND PRD_MARC_PRD_ID = @MARC_PRD_ID
+                AND PRD_PRV_ID = @PRV_ID
+        )
+        BEGIN
+            RAISERROR('Error: Ya existe un producto con la misma descripción, tipo, marca y proveedor.', 16, 1);
+            RETURN;
+        END;
+
+        SELECT @INV_ID = INV_ID
+        FROM DBO.INVENTARIOS_TB
+        WHERE INV_PRD_ID = @PRD_ID
+            AND INV_UBI_INV_ID = @UBI_INV_ID;
+
+        IF @INV_ID IS NOT NULL
+        BEGIN
+            RAISERROR('Error: Ya existe un registro de inventario para este producto en la ubicación indicada.', 16, 1);
+            RETURN;
+        END;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_PRODUCTO_SP';
+
+        -- Nuevo producto
+        INSERT INTO DBO.PRODUCTOS_TB (
+            PRD_RutaImagen,
+            PRD_Descripcion,
+            PRD_TIPO_PRD_ID,
+            PRD_MARC_PRD_ID,
+            PRD_PRV_ID,
+            PRD_DESC_ID,
+            PRD_PrecioCompra,
+            PRD_PrecioVenta
+        )
+        VALUES (
+            @RutaImagen,
+            @Descripcion,
+            @TIPO_PRD_ID,
+            @MARC_PRD_ID,
+            @PRV_ID,
+            @DESC_ID,       -- NULL si no se especificó descuento
+            @PrecioCompra,
+            @PrecioVenta
+        );
+
+        SET @PRD_ID = SCOPE_IDENTITY();
+
+        -- Insert a Inventario
+        INSERT INTO DBO.INVENTARIOS_TB (
+            INV_UBI_INV_ID,
+            INV_PRD_ID,
+            INV_StockMinimo,
+            INV_StockActual
+        )
+        VALUES (
+            @UBI_INV_ID,
+            @PRD_ID,
+            @StockMinimo,
+            @CantidadIngreso
+        );
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+        
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
 -- CREATE OR ALTER PROCEDURE 
 
 /*
@@ -3343,7 +3623,7 @@ GO
 	FILTRO -- CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
 	FILTRO -- CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
 
-	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento (Si aplica), se busca en inventario y en ubicación y 
+	X REGISTRAR_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento (Si aplica), se busca en inventario y en ubicación y 
 								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
 								se agrega a inventario y se le pone la cantidad agregada al registro)
 
