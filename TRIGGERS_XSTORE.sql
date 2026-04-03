@@ -788,15 +788,17 @@ BEGIN
             ELSE 
                 'Se usó MODIFICAR_PROVEEDOR_TR.'
         END,
-        '[ Proveedor : ' + P.PER_NombreCompleto + 
+        '[ Proveedor : ' + P_OLD.PER_NombreCompleto + 
         ' | Estado: ' + CASE WHEN D.PRV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
-        '[ Proveedor : ' + P.PER_NombreCompleto + 
+        '[ Proveedor : ' + P_NEW.PER_NombreCompleto + 
         ' | Estado: ' + CASE WHEN I.PRV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
-    FROM DELETED D
-    INNER JOIN INSERTED I
-        ON D.PRV_ID = I.PRV_ID
-    INNER JOIN PERSONAS_TB P
-        ON I.PRV_PER_ID = P.PER_ID;
+        FROM DELETED D
+        INNER JOIN INSERTED I 
+            ON D.PRV_ID = I.PRV_ID
+        INNER JOIN PERSONAS_TB P_NEW 
+            ON I.PRV_PER_ID = P_NEW.PER_ID
+        INNER JOIN PERSONAS_TB P_OLD 
+            ON D.PRV_PER_ID = P_OLD.PER_ID;
 END;
 GO
 
@@ -933,5 +935,63 @@ BEGIN
     FROM INSERTED I
     INNER JOIN DBO.CAT_DESCUENTOS_TB C
         ON I.DESC_CAT_DESC_ID = C.CAT_DESC_ID;
+END;
+GO
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_DESCUENTO_TR
+ON DBO.DESCUENTOS_TB
+AFTER UPDATE
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'DESCUENTOS_TB',
+        I.DESC_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_DESCUENTO_TR.'
+            ELSE
+                'Se usó MODIFICAR_DESCUENTO_TR.'
+        END,
+        '[ Nombre Comercial: ' + D.DESC_NombreComercial +
+        ' | Descripción: '     + D.DESC_Descripcion +
+        ' | Categoría: '       + C_OLD.CAT_DESC_Nombre +
+        ' | Descuento: '       + CONVERT(VARCHAR(5), D.DESC_DescuentoPct) + '%' +
+        ' | Fecha Inicio: '    + CONVERT(VARCHAR(10), D.DESC_FechaInicio, 120) +
+        ' | Fecha Fin: '       + CONVERT(VARCHAR(10), D.DESC_FechaFin, 120) +
+        ' | Estado: '          + CASE WHEN D.DESC_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Nombre Comercial: ' + I.DESC_NombreComercial +
+        ' | Descripción: '     + I.DESC_Descripcion +
+        ' | Categoría: '       + C_NEW.CAT_DESC_Nombre +
+        ' | Descuento: '       + CONVERT(VARCHAR(5), I.DESC_DescuentoPct) + '%' +
+        ' | Fecha Inicio: '    + CONVERT(VARCHAR(10), I.DESC_FechaInicio, 120) +
+        ' | Fecha Fin: '       + CONVERT(VARCHAR(10), I.DESC_FechaFin, 120) +
+        ' | Estado: '          + CASE WHEN I.DESC_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.DESC_ID = I.DESC_ID
+    INNER JOIN DBO.CAT_DESCUENTOS_TB C_OLD
+        ON D.DESC_CAT_DESC_ID = C_OLD.CAT_DESC_ID
+    INNER JOIN DBO.CAT_DESCUENTOS_TB C_NEW
+        ON I.DESC_CAT_DESC_ID = C_NEW.CAT_DESC_ID;
 END;
 GO

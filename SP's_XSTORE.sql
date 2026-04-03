@@ -742,7 +742,7 @@ BEGIN
                 @Accion         = 'SELECT',
                 @TablaAfectada  = 'SESIONES_TB',
                 @FilaAfectada   = @Sesion_ID,
-                @Descripcion    = 'Se usí VERIFICAR_SESION_SP.',
+                @Descripcion    = 'Se usó VERIFICAR_SESION_SP.',
                 @Antes          = NULL,
                 @Despues        = NULL
         END TRY
@@ -2964,9 +2964,9 @@ BEGIN
             RETURN;
         END;
 
-        IF @FechaFinal < @FechaInicio
+        IF @FechaFinal <= @FechaInicio
         BEGIN
-            RAISERROR('Error: La fecha final debe ser posterior o igual a la fecha de inicio.', 16, 1);
+            RAISERROR('Error: La fecha final debe ser posterior a la fecha de inicio.', 16, 1);
             RETURN;
         END;
 
@@ -3087,7 +3087,13 @@ BEGIN
                 WHEN @FechaHoy < D.DESC_FechaInicio THEN DATEDIFF(DAY, @FechaHoy, D.DESC_FechaInicio)
                 WHEN @FechaHoy > D.DESC_FechaFin THEN DATEDIFF(DAY, D.DESC_FechaFin, @FechaHoy) * -1
                 ELSE DATEDIFF(DAY, @FechaHoy, D.DESC_FechaFin)
-            END AS [Días]
+            END AS [Días],
+            CASE 
+                WHEN D.DESC_Estado = 1
+                    THEN 'Activo'
+                ELSE
+                    'Inactivo'
+            END AS [Estado]
         FROM DBO.DESCUENTOS_TB D
         INNER JOIN DBO.CAT_DESCUENTOS_TB C
             ON D.DESC_CAT_DESC_ID = C.CAT_DESC_ID
@@ -3156,16 +3162,175 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_DESCUENTO_SP
+    @NombreUsuario          VARCHAR(75),
+    @NombreComercial        VARCHAR(100),
+    @NuevoNombreComercial   VARCHAR(100)    = NULL,
+    @NuevaDescripcion       VARCHAR(175)    = NULL,
+    @NuevaCategoria         VARCHAR(75)     = NULL,
+    @NuevoPorcentaje        DECIMAL(5,2)    = NULL,
+    @NuevaFechaInicio       DATE            = NULL,
+    @NuevaFechaFin          DATE            = NULL,
+    @NuevoEstado            BIT             = NULL
+AS
+BEGIN
 
-EXEC CONSULTAR_AUDITORIAS_SP
-	@NombreUsuario = 'AskingMansOz',
-    --@FechaFiltro = '2026-03-29',
-	@TablaFiltro = 'PERSONAS_TB';
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID         INT;
+    DECLARE @DESC_ID            INT;
+    DECLARE @CAT_DESC_ID_Actual INT;
+    DECLARE @CAT_DESC_ID_Nueva  INT;
+    DECLARE @FechaInicioFinal   DATE;
+    DECLARE @FechaFinFinal      DATE;
+
+    SET @NombreComercial        = TRIM(ISNULL(@NombreComercial, ''));
+    SET @NuevoNombreComercial   = TRIM(ISNULL(@NuevoNombreComercial, ''));
+    SET @NuevaDescripcion       = TRIM(ISNULL(@NuevaDescripcion, ''));
+    SET @NuevaCategoria         = TRIM(ISNULL(@NuevaCategoria, ''));
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Obtener datos actuales del descuento
+        SELECT
+            @DESC_ID = DESC_ID,
+            @CAT_DESC_ID_Actual = DESC_CAT_DESC_ID,
+            @FechaInicioFinal = DESC_FechaInicio,
+            @FechaFinFinal = DESC_FechaFin
+        FROM DBO.DESCUENTOS_TB
+        WHERE DESC_NombreComercial = @NombreComercial;
+
+        IF @DESC_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El descuento [%s] no existe.', 16, 1, @NombreComercial);
+            RETURN;
+        END;
+
+        -- Verificar que se especificó al menos un cambio
+        IF LEN(@NuevoNombreComercial) = 0
+            AND LEN(@NuevaDescripcion) = 0
+            AND LEN(@NuevaCategoria) = 0
+            AND @NuevoPorcentaje IS NULL
+            AND @NuevaFechaInicio IS NULL
+            AND @NuevaFechaFin IS NULL
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para el descuento [%s].', 16, 1, @NombreComercial);
+            RETURN;
+        END;
+
+        -- Validar nuevo nombre comercial no duplicado
+        IF LEN(@NuevoNombreComercial) > 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.DESCUENTOS_TB
+                WHERE DESC_NombreComercial = @NuevoNombreComercial
+                    AND DESC_ID != @DESC_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe un descuento con el nombre comercial [%s].', 16, 1, @NuevoNombreComercial);
+                RETURN;
+            END;
+        END;
+
+        -- Validar nueva categoría
+        IF LEN(@NuevaCategoria) > 0
+        BEGIN
+            SELECT @CAT_DESC_ID_Nueva = CAT_DESC_ID
+            FROM DBO.CAT_DESCUENTOS_TB
+            WHERE CAT_DESC_Nombre = @NuevaCategoria
+                AND CAT_DESC_Estado = 1;
+
+            IF @CAT_DESC_ID_Nueva IS NULL
+            BEGIN
+                RAISERROR('Error: La categoría [%s] no existe o está inactiva.', 16, 1, @NuevaCategoria);
+                RETURN;
+            END;
+        END;
+
+        -- Validar porcentaje
+        IF @NuevoPorcentaje IS NOT NULL
+            AND (@NuevoPorcentaje < 0.00 OR @NuevoPorcentaje > 100.00)
+        BEGIN
+            RAISERROR('Error: El porcentaje debe estar entre 0 y 100.', 16, 1);
+            RETURN;
+        END;
+
+        -- Calcular fechas finales para validar coherencia
+        IF @NuevaFechaInicio IS NOT NULL
+            SET @FechaInicioFinal = @NuevaFechaInicio;
+
+        IF @NuevaFechaFin IS NOT NULL
+            SET @FechaFinFinal = @NuevaFechaFin;
+
+        IF @FechaFinFinal <= @FechaInicioFinal
+        BEGIN
+            RAISERROR('Error: La fecha fin debe ser posterior a la fecha inicio.', 16, 1);
+            RETURN;
+        END;
+
+        -- Preparar contexto para auditoría
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_DESCUENTO_SP';
+
+        UPDATE DBO.DESCUENTOS_TB
+        SET
+            DESC_NombreComercial = ISNULL(NULLIF(@NuevoNombreComercial, ''), DESC_NombreComercial),
+            DESC_Descripcion     = ISNULL(NULLIF(@NuevaDescripcion, ''), DESC_Descripcion),
+            DESC_CAT_DESC_ID     = ISNULL(@CAT_DESC_ID_Nueva, DESC_CAT_DESC_ID),
+            DESC_DescuentoPct    = ISNULL(@NuevoPorcentaje, DESC_DescuentoPct),
+            DESC_FechaInicio     = ISNULL(@NuevaFechaInicio, DESC_FechaInicio),
+            DESC_FechaFin        = ISNULL(@NuevaFechaFin, DESC_FechaFin),
+            DESC_Estado          = ISNULL(@NuevoEstado, DESC_Estado)
+        WHERE DESC_ID = @DESC_ID;
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
 
 -- CREATE OR ALTER PROCEDURE 
 
 /*
-
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 	CONSULTAR_INVENTARIOS_UBICACION_SP (Select y join por ubicaciones)
 	CONSULTAR_INVENTARIOS_TIPOS_PRODUCTOS_SP (Select y join por productos)
@@ -3178,7 +3343,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	FILTRO -- CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
 	FILTRO -- CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
 
-	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento, se busca en inventario y en ubicación y 
+	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento (Si aplica), se busca en inventario y en ubicación y 
 								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
 								se agrega a inventario y se le pone la cantidad agregada al registro)
 
@@ -3186,13 +3351,14 @@ EXEC CONSULTAR_AUDITORIAS_SP
     (Registrar_Productos_SP) APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios) -- Va en Registrar Productos
 	(Modificar_Producto_SP) (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
 
-	CONSULTAR_DESCUENTOS_SP (Select y join a cat_descuentos)
-	-- VIEW CONSULTAR_CAT_DESCUENTO_PRODUCTO_SP (Select categoría de descuento, el descuento y que producto)
-	-- VIEW CONSULTAR_PRODUCTOS_SIN_DESCUENTO_SP (Select productos que no tengan descuentos aplicados)
-	-- VIEW CONSULTAR_PRODUCTOS_CON_DESCUENTO_SP (Selecy productos que si tengan descuentos aplicados y cuanto y por cuanto tiempo)
+	X CONSULTAR_DESCUENTOS_SP (Select y join a cat_descuentos)
+
+	-- VIEW (Select categoría de descuento, el descuento y que producto)
+	-- VIEW (Select productos que no tengan descuentos aplicados)
+	-- VIEW (Selecy productos que si tengan descuentos aplicados y cuanto y por cuanto tiempo)
 
 	X REGISTRAR_DESCUENTO_SP (Incluye la categoría_Descuento)
-	MODIFICAR_DESCUENTO_SP (Update Descuentos)
+	X MODIFICAR_DESCUENTO_SP (Update Descuentos)
 
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
