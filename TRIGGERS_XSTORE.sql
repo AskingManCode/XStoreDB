@@ -995,3 +995,151 @@ BEGIN
         ON I.DESC_CAT_DESC_ID = C_NEW.CAT_DESC_ID;
 END;
 GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_PRODUCTO_TR
+ON DBO.PRODUCTOS_TB
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada,
+        AUD_Descripcion, AUD_Antes, AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'PRODUCTOS_TB',
+        I.PRD_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_PRODUCTO_TR.'
+            ELSE
+                'Se usó REGISTRAR_PRODUCTO_TR.'
+        END,
+        NULL,
+        '[ Descripción: ' + I.PRD_Descripcion +
+        ' | Tipo: ' + TP.TIPO_PRD_Nombre +
+        ' | Marca: ' + MP.MARC_PRD_Nombre +
+        ' | Proveedor: ' + P.PER_NombreCompleto +
+        ' | P.Compra: ' + CONVERT(VARCHAR(15), I.PRD_PrecioCompra) +
+        ' | P.Venta: ' + CONVERT(VARCHAR(15), I.PRD_PrecioVenta) +
+        ' | Descuento: ' + ISNULL(D.DESC_NombreComercial, 'N/A') +
+        ' | Estado: ' + CASE WHEN I.PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I
+    INNER JOIN DBO.TIPOS_PRODUCTOS_TB TP
+        ON I.PRD_TIPO_PRD_ID = TP.TIPO_PRD_ID
+    INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP
+        ON I.PRD_MARC_PRD_ID = MP.MARC_PRD_ID
+    INNER JOIN DBO.PROVEEDORES_TB PRV
+        ON I.PRD_PRV_ID = PRV.PRV_ID
+    INNER JOIN DBO.PERSONAS_TB P
+        ON PRV.PRV_PER_ID = P.PER_ID
+    LEFT JOIN DBO.DESCUENTOS_TB D
+        ON I.PRD_DESC_ID = D.DESC_ID;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_INVENTARIO_TR
+ON DBO.INVENTARIOS_TB
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada,
+        AUD_Descripcion, AUD_Antes, AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'INVENTARIOS_TB',
+        I.INV_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_INVENTARIO_TR.'
+            ELSE
+                'Se usó REGISTRAR_INVENTARIO_TR.'
+        END,
+        NULL,
+        '[ Ubicación: ' + U.UBI_INV_Nombre +
+        ' | Producto: ' + P.PRD_Descripcion +
+        ' | Stock Mín: ' + CONVERT(VARCHAR(10), I.INV_StockMinimo) +
+        ' | Stock Actual: ' + CONVERT(VARCHAR(10), I.INV_StockActual) +
+        ' | Estado: ' + CASE WHEN I.INV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I
+    INNER JOIN DBO.UBI_INVENTARIOS_TB U
+        ON I.INV_UBI_INV_ID = U.UBI_INV_ID
+    INNER JOIN DBO.PRODUCTOS_TB P
+        ON I.INV_PRD_ID = P.PRD_ID;
+END;
+GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_INVENTARIO_TR
+ON DBO.INVENTARIOS_TB
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada,
+        AUD_Descripcion, AUD_Antes, AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'UPDATE',
+        'INVENTARIOS_TB',
+        I.INV_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y MODIFICAR_INVENTARIO_TR.'
+            ELSE
+                'Se usó MODIFICAR_INVENTARIO_TR.'
+        END,
+        '[ Ubicación: ' + U.UBI_INV_Nombre +
+        ' | Producto: ' + P.PRD_Descripcion +
+        ' | Stock Mín: ' + CONVERT(VARCHAR(10), D.INV_StockMinimo) +
+        ' | Stock Actual: ' + CONVERT(VARCHAR(10), D.INV_StockActual) +
+        ' | Estado: ' + CASE WHEN D.INV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+        '[ Ubicación: ' + U.UBI_INV_Nombre +
+        ' | Producto: ' + P.PRD_Descripcion +
+        ' | Stock Mín: ' + CONVERT(VARCHAR(10), I.INV_StockMinimo) +
+        ' | Stock Actual: ' + CONVERT(VARCHAR(10), I.INV_StockActual) +
+        ' | Estado: ' + CASE WHEN I.INV_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM DELETED D
+    INNER JOIN INSERTED I
+        ON D.INV_ID = I.INV_ID
+    INNER JOIN DBO.UBI_INVENTARIOS_TB U
+        ON I.INV_UBI_INV_ID = U.UBI_INV_ID
+    INNER JOIN DBO.PRODUCTOS_TB P
+        ON I.INV_PRD_ID = P.PRD_ID;
+END;
+GO
