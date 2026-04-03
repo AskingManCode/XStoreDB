@@ -3028,30 +3028,134 @@ GO
 
 
 
-EXEC CONSULTAR_TIPOS_PERSONAS_SP
-    @NombreUsuario = 'AskingMansOz';
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_DESCUENTOS_SP
+    @NombreUsuario      VARCHAR(75),        -- Responsable
+    @CategoriaFiltro    VARCHAR(75)  = NULL, -- Filtro por nombre de categoría
+    @FechaDesde         DATE         = NULL, -- Rango inicio
+    @FechaHasta         DATE         = NULL  -- Rango fin
+AS
+BEGIN
 
-EXEC REGISTRAR_TIPO_PERSONA_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Vendedor',
-    @DescuentoPct = 15,
-    @MontoMeta = 0;
+    SET NOCOUNT ON;
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-EXEC MODIFICAR_TIPO_PERSONA_SP
-    @NombreUsuario = 'AskingMansOz',
-    @Nombre = 'Cliente Frecuente',
-    @NuevoNombre = 'Cliente Frecuente',
-    @NuevoDescuentoPct = 10,
-    @NuevoMontoMeta = 500000,
-    @NuevoEstado = 1;
+    DECLARE @Persona_ID     INT;
+    DECLARE @Descripcion    VARCHAR(250);
+    DECLARE @FechaHoy       DATE = CAST(GETDATE() AS DATE);
 
-EXEC CONSULTAR_PERSONAS_SP
-    @NombreUsuario = 'AskingMansOz',
-    --@Filtro = 'ADMINISTRADORES';
-    @Busqueda = ''
+    BEGIN TRY
 
-EXEC DBO.CONSULTAR_NOMBRES_PROVEEDORES_SP
-    @NombreUsuario = 'AskingMansOz';
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Validar coherencia de fechas de filtro
+        IF @FechaDesde IS NOT NULL AND @FechaHasta IS NOT NULL
+           AND @FechaHasta < @FechaDesde
+        BEGIN
+            RAISERROR('Error: La fecha hasta no puede ser anterior a la fecha desde.', 16, 1);
+            RETURN;
+        END;
+
+        -- Consulta principal con indicadores de vigencia temporal únicamente
+        SELECT 
+            D.DESC_NombreComercial AS [Nombre Comercial],
+            D.DESC_Descripcion AS [Descripción],
+            C.CAT_DESC_Nombre AS [Categoría],
+            CONVERT(VARCHAR(5), D.DESC_DescuentoPct) + '%' AS [Porcentaje],
+            CONVERT(VARCHAR(10), D.DESC_FechaInicio, 120) AS [Fecha Inicio],
+            CONVERT(VARCHAR(10), D.DESC_FechaFin, 120) AS [Fecha Fin],
+            -- Solo vigencia temporal basada en fechas, no en estado del registro
+            CASE  
+                WHEN @FechaHoy < D.DESC_FechaInicio THEN 'Pendiente'
+                WHEN @FechaHoy > D.DESC_FechaFin THEN 'Vencido'
+                ELSE 'Vigente'
+            END AS [Estado Vigencia],
+            -- Días calculados según vigencia
+            CASE 
+                WHEN @FechaHoy < D.DESC_FechaInicio THEN DATEDIFF(DAY, @FechaHoy, D.DESC_FechaInicio)
+                WHEN @FechaHoy > D.DESC_FechaFin THEN DATEDIFF(DAY, D.DESC_FechaFin, @FechaHoy) * -1
+                ELSE DATEDIFF(DAY, @FechaHoy, D.DESC_FechaFin)
+            END AS [Días]
+        FROM DBO.DESCUENTOS_TB D
+        INNER JOIN DBO.CAT_DESCUENTOS_TB C
+            ON D.DESC_CAT_DESC_ID = C.CAT_DESC_ID
+        WHERE 
+            -- Filtro por categoría
+            (@CategoriaFiltro IS NULL OR C.CAT_DESC_Nombre = @CategoriaFiltro)
+            -- Filtro por rango de fechas
+            AND (
+                @FechaDesde IS NULL 
+                OR @FechaHasta IS NULL
+                OR (D.DESC_FechaInicio <= @FechaHasta AND D.DESC_FechaFin >= @FechaDesde)
+            )
+        ORDER BY 
+            -- Orden: Vigentes primero, luego pendientes, luego vencidos
+            CASE 
+                WHEN @FechaHoy BETWEEN D.DESC_FechaInicio AND D.DESC_FechaFin THEN 0
+                WHEN @FechaHoy < D.DESC_FechaInicio THEN 1
+                ELSE 2
+            END,
+            D.DESC_FechaInicio DESC;
+
+        -- Auditoría
+        BEGIN TRY
+            -- Construir descripción paso a paso para evitar errores de precedencia
+            SET @Descripcion = 'Se usó CONSULTAR_DESCUENTOS_SP';
+            
+            IF @CategoriaFiltro IS NOT NULL 
+                SET @Descripcion = @Descripcion + ' con categoría [' + LEFT(@CategoriaFiltro, 30) + '].';
+            ELSE 
+                SET @Descripcion = @Descripcion + ' sin filtro específico (Todos).';
+            
+            IF @FechaDesde IS NOT NULL AND @FechaHasta IS NOT NULL 
+                SET @Descripcion = @Descripcion + ' Rango de fechas [' + CONVERT(VARCHAR(10), @FechaDesde, 120) + ' a ' + CONVERT(VARCHAR(10), @FechaHasta, 120) + '].';
+            ELSE IF @FechaDesde IS NOT NULL 
+                SET @Descripcion = @Descripcion + ' Desde [' + CONVERT(VARCHAR(10), @FechaDesde, 120) + '].';
+            ELSE IF @FechaHasta IS NOT NULL 
+                SET @Descripcion = @Descripcion + ' Hasta [' + CONVERT(VARCHAR(10), @FechaHasta, 120) + '].';
+
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'DESCUENTOS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = @Descripcion,
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+END;
+GO
+
+
+
 
 EXEC CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario = 'AskingMansOz',
@@ -3087,7 +3191,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	-- VIEW CONSULTAR_PRODUCTOS_SIN_DESCUENTO_SP (Select productos que no tengan descuentos aplicados)
 	-- VIEW CONSULTAR_PRODUCTOS_CON_DESCUENTO_SP (Selecy productos que si tengan descuentos aplicados y cuanto y por cuanto tiempo)
 
-	REGISTRAR_DESCUENTO_SP (Incluye la categoría_Descuento)
+	X REGISTRAR_DESCUENTO_SP (Incluye la categoría_Descuento)
 	MODIFICAR_DESCUENTO_SP (Update Descuentos)
 
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
