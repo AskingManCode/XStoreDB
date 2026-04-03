@@ -765,6 +765,10 @@ GO
 
 
 
+
+
+
+
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_TIPOS_PRODUCTOS_SP
     @NombreUsuario  VARCHAR(75)    -- Responsable
 AS 
@@ -2867,6 +2871,163 @@ GO
 
 
 
+CREATE OR ALTER PROCEDURE DBO.REGISTRAR_DESCUENTO_SP
+    @NombreUsuario          VARCHAR(75),    -- Responsable
+    @NombreComercial        VARCHAR(100),
+    @Descripcion            VARCHAR(175),
+    @Categoria              VARCHAR(75),
+    @Porcentaje             DECIMAL(5,2),
+    @FechaInicio            DATE,
+    @FechaFinal             DATE
+AS
+BEGIN
+    
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID     INT;
+    DECLARE @CAT_DESC_ID    INT;
+
+    SET @NombreComercial = TRIM(ISNULL(@NombreComercial, ''));
+    SET @Descripcion     = TRIM(ISNULL(@Descripcion, ''));
+    SET @Categoria       = TRIM(ISNULL(@Categoria, ''));
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos y obtención de ID
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Validar nombre comercial
+        IF LEN(@NombreComercial) = 0
+        BEGIN
+            RAISERROR('Error: El nombre comercial no puede estar vacío.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar descripción
+        IF LEN(@Descripcion) = 0
+        BEGIN
+            RAISERROR('Error: La descripción no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar categoría
+        IF LEN(@Categoria) = 0
+        BEGIN
+            RAISERROR('Error: La categoría no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        -- Obtener ID de la categoría
+        SELECT @CAT_DESC_ID = CAT_DESC_ID
+        FROM DBO.CAT_DESCUENTOS_TB
+        WHERE CAT_DESC_Nombre = @Categoria
+            AND CAT_DESC_Estado = 1;
+
+        IF @CAT_DESC_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La categoría [%s] no existe o está inactiva.', 16, 1, @Categoria);
+            RETURN;
+        END;
+
+        -- Validar porcentaje
+        IF @Porcentaje < 0 OR @Porcentaje > 100
+        BEGIN
+            RAISERROR('Error: El porcentaje de descuento debe estar entre 0 y 100.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar fechas
+        IF @FechaInicio IS NULL
+        BEGIN
+            RAISERROR('Error: La fecha de inicio no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        IF @FechaFinal IS NULL
+        BEGIN
+            RAISERROR('Error: La fecha final no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        IF @FechaFinal < @FechaInicio
+        BEGIN
+            RAISERROR('Error: La fecha final debe ser posterior o igual a la fecha de inicio.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar que no exista un descuento con el mismo nombre comercial
+        IF EXISTS (
+            SELECT 1 
+            FROM DBO.DESCUENTOS_TB 
+            WHERE DESC_NombreComercial = @NombreComercial
+        )
+        BEGIN
+            RAISERROR('Error: Ya existe un descuento con el nombre comercial [%s].', 16, 1, @NombreComercial);
+            RETURN;
+        END;
+
+        -- Preparar contexto para auditoría
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_DESCUENTO_SP';
+
+        -- Insertar descuento
+        INSERT INTO DBO.DESCUENTOS_TB (
+            DESC_NombreComercial,
+            DESC_Descripcion,
+            DESC_CAT_DESC_ID,
+            DESC_DescuentoPct,
+            DESC_FechaInicio,
+            DESC_FechaFin
+        )
+        VALUES (
+            @NombreComercial,
+            @Descripcion,
+            @CAT_DESC_ID,
+            @Porcentaje,
+            @FechaInicio,
+            @FechaFinal
+        );
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+        
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
+
 EXEC CONSULTAR_TIPOS_PERSONAS_SP
     @NombreUsuario = 'AskingMansOz';
 
@@ -2886,7 +3047,8 @@ EXEC MODIFICAR_TIPO_PERSONA_SP
 
 EXEC CONSULTAR_PERSONAS_SP
     @NombreUsuario = 'AskingMansOz',
-    @Filtro = 'ADMINISTRADORES';
+    --@Filtro = 'ADMINISTRADORES';
+    @Busqueda = ''
 
 EXEC DBO.CONSULTAR_NOMBRES_PROVEEDORES_SP
     @NombreUsuario = 'AskingMansOz';
@@ -2896,30 +3058,9 @@ EXEC CONSULTAR_AUDITORIAS_SP
     --@FechaFiltro = '2026-03-29',
 	@TablaFiltro = 'PERSONAS_TB';
 
-
 -- CREATE OR ALTER PROCEDURE 
 
 /*
-	SP's XStore
-
-	X REGISTRAR_AUDITORIA_SP (Parámetros - Persona_id, accion[insert, delete, update], tablaAfectada, Descripción[mas de 10 letras])
-	X CONSULTA_AUDITORIAS_SP (Select y join de todas las auditorias con nombre de persona)
-
-	X CONSULTAR_ROLES_SP (Select simple Roles)
-	X REGISTRAR_ROL_SP (Insert a Roles)
-	X MODIFICAR_ROL_SP (Update a Roles) 
-
-	X CONSULTAR_TIPOS_PRODUCTOS_SP (Select simple tipos_productos)
-	X REGISTRAR_TIPO_PODUCTO_SP (Insert a tipos_prodcutos)
-	X MODIFICAR_TIPO_PRODUCTO_SP (Update a Tipos_productos)
-
-	X CONSULTAR_MARCAS_PRODUCTOS_SP (select simple marcas)
-	X REGISTRAR_MARCAS_PRODUCTOS_SP (Insert a marcas)
-	X MODIFICAR_MARCA_PRODUCTO_SP (Update a marcas)
-
-    X CONSULTAR_UBICACIONES_SP (Select simple nombre)
-	X REGISTRAR_UBICACION_SP (Insert UBI_INVENTARIOS)
-	X MODIFICAR_UBICACION_SP (Update a UBI_INVENTARIOS)
 
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 	CONSULTAR_INVENTARIOS_UBICACION_SP (Select y join por ubicaciones)
@@ -2929,29 +3070,26 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	MODIFICAR_STOCK_MINIMO_SP (Update StockMinimo de un producto)
 
 	CONSULTAR_PRODUCTOS_SP (select con joins) -- Aplicar Filtros
-	FILTRO CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
-	FILTRO CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
-	FILTRO CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
+	FILTRO -- CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
+	FILTRO -- CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
+	FILTRO -- CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
 
-	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento null porque apenas se crea el producto, se busca en inventario y en ubicación y 
+	REGISTRAR_NUEVO_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento, se busca en inventario y en ubicación y 
 								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
 								se agrega a inventario y se le pone la cantidad agregada al registro)
-	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, no aplica update al descuento)
 
-	X CONSULTAR_CAT_DESCUENTOS_SP (Select simple)
-	X REGISTRAR_CAT_DESCUENTO_SP (Insert Cat_descuentos)
-	X MODIFICAR_CAT_DESCUENTO_SP (Update cat_descuento)
+	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, no aplica update al descuento)
+    (Registrar_Productos_SP) APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios) -- Va en Registrar Productos
+	(Modificar_Producto_SP) (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
 
 	CONSULTAR_DESCUENTOS_SP (Select y join a cat_descuentos)
-	CONSULTAR_CAT_DESCUENTO_PRODUCTO_SP (Select categoría de descuento, el descuento y que producto)
+	-- VIEW CONSULTAR_CAT_DESCUENTO_PRODUCTO_SP (Select categoría de descuento, el descuento y que producto)
 	-- VIEW CONSULTAR_PRODUCTOS_SIN_DESCUENTO_SP (Select productos que no tengan descuentos aplicados)
 	-- VIEW CONSULTAR_PRODUCTOS_CON_DESCUENTO_SP (Selecy productos que si tengan descuentos aplicados y cuanto y por cuanto tiempo)
 
 	REGISTRAR_DESCUENTO_SP (Incluye la categoría_Descuento)
 	MODIFICAR_DESCUENTO_SP (Update Descuentos)
 
-	APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios) -- Va en Registrar Productos
-	QUITAR_DESCUENTO_PRODUCTO_SP (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 	X REGISTRAR_SESION_SP
@@ -2959,31 +3097,15 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	MODIFICAR_SESION_SP (Cambia contraseña si se cambia o nombre de usuario, Recordar NombreUsuario es UNIQUE)
 
 	-------------------------------------------------------------------------------------------------------------------------------------------------------
-	X CONSULTAR_TIPOS_PERSONAS_SP (Select simple)
-	X REGISTRAR_TIPO_PERSONA_SP (Insert tipos_personas)
-	X MODIFICAR_TIPO_PERSONA_SP (Update tipos_personas, activo o inactivo)
 
 	X CONSULTAR_PERSONAS_SP (Select join con tipo_persona, vendedor(empleados) o administradores o proveedores, o todo junto)
 
-	REGISTRAR_USUARIO_SP (Insert a personas que usa tipo_personaID, insert a sesiones que usa rolID y personaID (Entra como varchar y busca el ID para asignarlo a la tabla), 
+	X REGISTRAR_USUARIO_SP (Insert a personas que usa tipo_personaID, insert a sesiones que usa rolID y personaID (Entra como varchar y busca el ID para asignarlo a la tabla), 
 							Rol Administrador, Vendedor(Empleado) o Cliente, si los datos ya existen y es un proveedor previamente registrado se le puede 
 							agregar como rol cliente a este proveedor para que haga compras en caso de que decida ser cliente)
 
-	MODIFICAR_PERSONA_SP (Update a personas) -- El tipo de persona no se cambia porque se hará automático según las comprás realizadas
-
-	REGISTRAR_PROVEEDOR_SP (Agrega a Persona, Lo asigna como proveedor en la tabla de proveedores, Se le asigna tipo de persona cliente_normal 0%)
-
-	MODIFICAR_PROVEEDOR_SP (Update en Personas proveedores, activo o inactivo)
-
-	Nota: 
-	1. EL registro de un usuario del sistema es diferente al registro de un proveedor (este no tiene rol ni cuenta inicialmente)
-	2. Todo debe tener auditoría
-	3. Los triggers tienen que funcionar con sp y sin sp, osea auditoría real sin margen de error.
+	MODIFICAR_PERSONA_SP (Update a personas, proveedores, clientes, administradores) -- El tipo de persona no se cambia porque se hará automático según las comprás realizadas
 	-------------------------------------------------------------------------------------------------------------------------------------------------------
-
-	X CONSULTAR_ESTADOS_ENTREGA_SP (Select simple estados_entrega)
-	X REGISTRAR_ESTADO_ENTREGA_SP (Insert estados_entrega)
-	X MODIFICAR_ESTADO_ENTREGA_SP (Activar o Inactivar)
 
 	FACTURAR_CLIENTE_SP (crear encabezados, referenciar cliente, agregar entrega si aplica y referenciar el estado y detallar factura, 
 						agregar productos, verificar descuentos, aplicar descuentos si existen, 

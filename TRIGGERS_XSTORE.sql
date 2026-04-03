@@ -885,3 +885,53 @@ BEGIN
         ON D.EST_ENT_ID = I.EST_ENT_ID;
 END;
 GO
+
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_DESCUENTO_TR
+ON DBO.DESCUENTOS_TB
+AFTER INSERT
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    INSERT INTO DBO.AUDITORIAS_TB (
+        AUD_PER_ID,
+        AUD_Accion,
+        AUD_TablaAfectada,
+        AUD_FilaAfectada,
+        AUD_Descripcion,
+        AUD_Antes,
+        AUD_Despues
+    )
+    SELECT
+        @Persona_ID,
+        'INSERT',
+        'DESCUENTOS_TB',
+        I.DESC_ID,
+        CASE
+            WHEN @Origen IS NOT NULL
+                THEN 'Se usó ' + @Origen + ' y REGISTRAR_DESCUENTO_TR.'
+            ELSE
+                'Se usó REGISTRAR_DESCUENTO_TR.'
+        END,
+        NULL,
+        '[ Nombre Comercial: ' + I.DESC_NombreComercial + 
+        ' | Descripción: ' + I.DESC_Descripcion + 
+        ' | Categoría: ' + C.CAT_DESC_Nombre +
+        ' | Descuento: ' + CONVERT(VARCHAR(5), I.DESC_DescuentoPct) + '%' +
+        ' | Fecha Inicio: ' + CONVERT(VARCHAR(10), I.DESC_FechaInicio, 120) +
+        ' | Fecha Fin: ' + CONVERT(VARCHAR(10), I.DESC_FechaFin, 120) +
+        ' | Estado: ' + CASE WHEN I.DESC_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+    FROM INSERTED I
+    INNER JOIN DBO.CAT_DESCUENTOS_TB C
+        ON I.DESC_CAT_DESC_ID = C.CAT_DESC_ID;
+END;
+GO

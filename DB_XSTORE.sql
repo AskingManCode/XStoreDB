@@ -591,7 +591,6 @@ BEGIN
 
         CONSTRAINT UQ_INV_UbicacionProductos
             UNIQUE (INV_UBI_INV_ID, INV_PRD_ID)
-
     );
 END
 GO
