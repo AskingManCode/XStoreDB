@@ -176,6 +176,68 @@ END;
 GO
 
 
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_SESION_TR
+ON DBO.SESIONES_TB
+AFTER UPDATE
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID,
+            AUD_Accion,
+            AUD_TablaAfectada,
+            AUD_FilaAfectada,
+            AUD_Descripcion,
+            AUD_Antes,
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'UPDATE',
+            'SESIONES_TB',
+            I.SESION_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y MODIFICAR_SESION_TR.'
+                ELSE
+                    'Se usó MODIFICAR_SESION_TR.'
+            END,
+            '[ Persona: ' + P.PER_NombreCompleto +
+            ' | Usuario: ' + D.SESION_NombreUsuario +
+            ' | Contraseña: ****' +
+            ' | Rol: ' + R_OLD.ROL_Nombre +
+            ' | Estado: ' + CASE WHEN D.SESION_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+            '[ Persona: ' + P.PER_NombreCompleto +
+            ' | Usuario: ' + I.SESION_NombreUsuario +
+            ' | Contraseña: ****' +
+            ' | Rol: ' + R_NEW.ROL_Nombre +
+            ' | Estado: ' + CASE WHEN I.SESION_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+        FROM DELETED D
+        INNER JOIN INSERTED I
+            ON D.SESION_ID = I.SESION_ID
+        INNER JOIN DBO.PERSONAS_TB P
+            ON I.SESION_PER_ID = P.PER_ID
+        INNER JOIN DBO.ROLES_TB R_OLD
+            ON D.SESION_ROL_ID = R_OLD.ROL_ID
+        INNER JOIN DBO.ROLES_TB R_NEW
+            ON I.SESION_ROL_ID = R_NEW.ROL_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
+
+
 CREATE OR ALTER TRIGGER DBO.REGISTRAR_TIPO_PRODUCTO_TR
 ON DBO.TIPOS_PRODUCTOS_TB 
 AFTER INSERT

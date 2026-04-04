@@ -2715,7 +2715,6 @@ BEGIN
         SELECT 
             S.SESION_NombreUsuario AS [Nombre Usuario],
             P.PER_NombreCompleto AS [Nombre Completo],
-            P.PER_Correo AS [Correo],
             R.ROL_Nombre AS [Rol],
             R.ROL_Accesos AS [Accesos]
         FROM DBO.SESIONES_TB S
@@ -2754,7 +2753,184 @@ END;
 GO
 
 
--- Modificar Nombre de Usuario o Contraseña DBO.MODIFICAR_SESION_SP
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_SESION_SP
+    @NombreUsuario      VARCHAR(75),            -- Responsable
+    @NombreUsuarioCuenta VARCHAR(75),           -- Cuenta a modificar (Nombre de Usuario)
+    @NuevoNombreUsuario VARCHAR(75)  = NULL,    -- NULL = no modificar
+    @NuevoPasswordHash  VARCHAR(255) = NULL,    -- NULL = no modificar
+    @NuevoRol           VARCHAR(50)  = NULL,    -- Solo Administrador puede modificarlo
+    @NuevoEstado        BIT          = NULL     -- Solo Administrador puede modificarlo
+AS
+BEGIN
+
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID        INT;
+    DECLARE @EsAdministrador   BIT = 0;
+    DECLARE @SESION_ID         INT;
+    DECLARE @SESION_PER_ID     INT;
+    DECLARE @Rol_ID            INT;
+
+    SET @NombreUsuarioCuenta = TRIM(ISNULL(@NombreUsuarioCuenta, ''));
+    SET @NuevoNombreUsuario  = NULLIF(TRIM(ISNULL(@NuevoNombreUsuario, '')), '');
+    SET @NuevoPasswordHash   = NULLIF(TRIM(ISNULL(@NuevoPasswordHash,  '')), '');
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de usuario activo y detección de rol
+        SELECT
+            @Persona_ID = S.SESION_PER_ID,
+            @EsAdministrador = CASE WHEN R.ROL_Nombre = 'Administrador' THEN 1 ELSE 0 END
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Obtener datos de la cuenta a modificar
+        SELECT
+            @SESION_ID = S.SESION_ID,
+            @SESION_PER_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        WHERE S.SESION_NombreUsuario = @NombreUsuarioCuenta;
+
+        IF @SESION_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La cuenta [%s] no existe.', 16, 1, @NombreUsuarioCuenta);
+            RETURN;
+        END;
+
+        -- Protección: la cuenta SISTEMA no se puede modificar
+        IF @SESION_PER_ID = 1
+        BEGIN
+            RAISERROR('No se permite modificar la cuenta SISTEMA.', 16, 1);
+            RETURN;
+        END;
+
+        -- Un persona que no sea Administrador solo puede modificar su propia cuenta
+        IF @EsAdministrador = 0 AND @Persona_ID != @SESION_PER_ID
+        BEGIN
+            RAISERROR('Acceso denegado: Solo puede modificar su propia cuenta.', 16, 1);
+            RETURN;
+        END;
+
+        -- Solo Administrador puede cambiar el rol
+        IF @NuevoRol IS NOT NULL AND @EsAdministrador = 0
+        BEGIN
+            RAISERROR('Acceso denegado: Solo un Administrador puede modificar el rol de una cuenta.', 16, 1);
+            RETURN;
+        END;
+
+        -- Solo Administrador puede activar o desactivar la cuenta
+        IF @NuevoEstado IS NOT NULL AND @EsAdministrador = 0
+        BEGIN
+            RAISERROR('Acceso denegado: Solo un Administrador puede activar o desactivar una cuenta.', 16, 1);
+            RETURN;
+        END;
+
+        -- Nada que modificar
+        IF @NuevoNombreUsuario IS NULL
+            AND @NuevoPasswordHash IS NULL
+            AND @NuevoRol          IS NULL
+            AND @NuevoEstado       IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para la cuenta [%s].', 16, 1, @NombreUsuarioCuenta);
+            RETURN;
+        END;
+
+        -- Validar que el nuevo nombre de usuario no esté en uso
+        IF @NuevoNombreUsuario IS NOT NULL
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.SESIONES_TB
+                WHERE SESION_NombreUsuario = @NuevoNombreUsuario
+                    AND SESION_ID != @SESION_ID
+            )
+            BEGIN
+                RAISERROR('Error: El nombre de usuario [%s] ya está registrado.', 16, 1, @NuevoNombreUsuario);
+                RETURN;
+            END;
+        END;
+
+        -- Resolver y validar el nuevo rol
+        IF @NuevoRol IS NOT NULL
+        BEGIN
+            SET @NuevoRol = TRIM(@NuevoRol);
+
+            IF UPPER(@NuevoRol) = 'SISTEMA'
+            BEGIN
+                RAISERROR('Error: El rol Sistema está reservado para la cuenta del sistema.', 16, 1);
+                RETURN;
+            END;
+
+            SELECT @Rol_ID = ROL_ID
+            FROM DBO.ROLES_TB
+            WHERE ROL_Nombre = @NuevoRol
+                AND ROL_Estado = 1;
+
+            IF @Rol_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El rol [%s] no existe o está inactivo.', 16, 1, @NuevoRol);
+                RETURN;
+            END;
+
+            -- La persona no puede debe ese rol en otra cuenta
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.SESIONES_TB
+                WHERE SESION_PER_ID = @SESION_PER_ID
+                    AND SESION_ROL_ID = @Rol_ID
+                    AND SESION_ID != @SESION_ID
+            )
+            BEGIN
+                RAISERROR('Error: La persona ya tiene otra cuenta registrada con el rol [%s].', 16, 1, @NuevoRol);
+                RETURN;
+            END;
+        END;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_SESION_SP';
+
+        UPDATE DBO.SESIONES_TB
+        SET
+            SESION_NombreUsuario = ISNULL(@NuevoNombreUsuario, SESION_NombreUsuario),
+            SESION_PwdHash       = ISNULL(@NuevoPasswordHash,  SESION_PwdHash),
+            SESION_ROL_ID        = ISNULL(@Rol_ID,             SESION_ROL_ID),
+            SESION_Estado        = ISNULL(@NuevoEstado,        SESION_Estado)
+        WHERE SESION_ID = @SESION_ID;
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_ESTADOS_ENTREGAS_SP
@@ -3911,10 +4087,9 @@ END;
 GO
 
 
--- ==========================================
--- Me sirve este Join
--- ==========================================
 
+-- Me sirve este select para Inventarios 
+-- Filtrar Por Ubicación o Producto
 SELECT 
     U.UBI_INV_Nombre AS [Ubicacion],
     P.PRD_Descripcion AS [Producto],
@@ -3957,15 +4132,6 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, no aplica update al descuento)
     (Registrar_Productos_SP) APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios) -- Va en Registrar Productos
 	(Modificar_Producto_SP) (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
-
-	X CONSULTAR_DESCUENTOS_SP (Select y join a cat_descuentos)
-
-	-- VIEW (Select categoría de descuento, el descuento y que producto)
-	-- VIEW (Select productos que no tengan descuentos aplicados)
-	-- VIEW (Selecy productos que si tengan descuentos aplicados y cuanto y por cuanto tiempo)
-
-	X REGISTRAR_DESCUENTO_SP (Incluye la categoría_Descuento)
-	X MODIFICAR_DESCUENTO_SP (Update Descuentos)
 
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
