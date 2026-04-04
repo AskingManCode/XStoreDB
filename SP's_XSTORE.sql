@@ -129,7 +129,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_AUDITORIAS_SP
 	@NombreUsuario	VARCHAR(75),    -- Responsable 
 	@FechaFiltro	DATE			= NULL,
@@ -364,7 +363,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_ROL_SP
     @NombreUsuario  VARCHAR(75),    -- Responsable
     @Nombre         VARCHAR(50),    -- Nombre actual del rol a modificar
@@ -493,7 +491,6 @@ BEGIN
 	END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_SESION_SP -- No agregar al API
@@ -643,7 +640,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.VERIFICAR_SESION_SP
     @NombreUsuario  VARCHAR(75),
     @PasswordHash   VARCHAR(255)
@@ -767,8 +763,6 @@ GO
 
 
 
-
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_TIPOS_PRODUCTOS_SP
     @NombreUsuario  VARCHAR(75)    -- Responsable
 AS 
@@ -831,7 +825,6 @@ BEGIN
     END CATCH
 END
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_TIPO_PRODUCTO_SP
@@ -909,7 +902,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_TIPO_PRODUCTO_SP
@@ -1028,7 +1020,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_MARCAS_PRODUCTOS_SP
     @NombreUsuario VARCHAR(75) -- Responsable
 AS
@@ -1091,7 +1082,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_MARCA_PRODUCTO_SP
@@ -1169,7 +1159,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_MARCA_PRODUCTO_SP
@@ -1290,7 +1279,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_UBICACIONES_SP
     @NombreUsuario  VARCHAR(75)     -- Responsable
 AS
@@ -1352,7 +1340,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_UBICACION_SP
@@ -1430,7 +1417,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_UBICACION_SP
@@ -1551,7 +1537,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_CAT_DESCUENTOS_SP
     @NombreUsuario  VARCHAR(75)     -- Responsable
 AS
@@ -1613,7 +1598,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_CAT_DESCUENTO_SP
@@ -1691,7 +1675,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_CAT_DESCUENTO_SP
@@ -1812,7 +1795,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_TIPOS_PERSONAS_SP
     @NombreUsuario VARCHAR(75)
 AS
@@ -1877,7 +1859,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_TIPO_PERSONA_SP
@@ -1968,7 +1949,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_TIPO_PERSONA_SP
@@ -2110,7 +2090,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_PERSONAS_SP
@@ -2266,7 +2245,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_USUARIO_SP
@@ -2537,7 +2515,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_NOMBRES_PROVEEDORES_SP -- Para ComboBox
     @NombreUsuario  VARCHAR(75)     -- Responsable
 AS
@@ -2566,7 +2543,6 @@ BEGIN
 
         -- Solo nombres de proveedores activos
         SELECT 
-            PRV.PRV_ID,
             P.PER_NombreCompleto AS [Nombre Proveedor],
             PRV.PRV_Estado AS [Estado]
         FROM DBO.PERSONAS_TB P
@@ -2601,7 +2577,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_ESTADOS_ENTREGAS_SP
@@ -2666,7 +2641,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_ESTADO_ENTREGA_SP
@@ -2744,7 +2718,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_ESTADO_ENTREGA_SP
@@ -2864,7 +2837,6 @@ BEGIN
     END CATCH
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_DESCUENTO_SP
@@ -3023,7 +2995,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_DESCUENTOS_SP
     @NombreUsuario      VARCHAR(75),        -- Responsable
     @CategoriaFiltro    VARCHAR(75)  = NULL, -- Filtro por nombre de categoría
@@ -3155,7 +3126,6 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 END;
 GO
-
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_DESCUENTO_SP
@@ -3323,7 +3293,6 @@ END;
 GO
 
 
-
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_PRODUCTO_SP
     @NombreUsuario      VARCHAR(75),
     @RutaImagen         VARCHAR(275),
@@ -3354,13 +3323,13 @@ BEGIN
     DECLARE @FechaHoy    DATE = CAST(GETDATE() AS DATE);
 
     -- Normalizado
-    SET @RutaImagen         = TRIM(ISNULL(@RutaImagen, ''));
-    SET @Descripcion        = TRIM(ISNULL(@Descripcion, ''));
-    SET @TipoProducto       = TRIM(ISNULL(@TipoProducto, ''));
-    SET @MarcaProducto      = TRIM(ISNULL(@MarcaProducto, ''));
-    SET @NombreProveedor    = TRIM(ISNULL(@NombreProveedor, ''));
-    SET @NombreUbicacion    = TRIM(ISNULL(@NombreUbicacion, ''));
-    SET @NombreDescuento    = NULLIF(TRIM(@NombreDescuento), '');
+    SET @RutaImagen       = TRIM(ISNULL(@RutaImagen, ''));
+    SET @Descripcion      = TRIM(ISNULL(@Descripcion, ''));
+    SET @TipoProducto     = TRIM(ISNULL(@TipoProducto, ''));
+    SET @MarcaProducto    = TRIM(ISNULL(@MarcaProducto, ''));
+    SET @NombreProveedor  = TRIM(ISNULL(@NombreProveedor, ''));
+    SET @NombreUbicacion  = TRIM(ISNULL(@NombreUbicacion, ''));
+    SET @NombreDescuento  = NULLIF(TRIM(@NombreDescuento), '');
 
     BEGIN TRY
         
@@ -3595,12 +3564,206 @@ BEGIN
 END;
 GO
 
+
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_PRODUCTOS_SP
+    @NombreUsuario      VARCHAR(75),            -- Responsable
+    @FiltroDescripcion  VARCHAR(150)    = NULL, -- Búsqueda parcial en descripción
+    @FiltroTipo         VARCHAR(75)     = NULL, -- Nombre exacto del tipo de producto
+    @FiltroMarca        VARCHAR(75)     = NULL, -- Nombre exacto de la marca
+    @FiltroProveedor    VARCHAR(150)    = NULL, -- Nombre exacto del proveedor
+    @FiltroDescuento    VARCHAR(100)    = NULL  -- Nombre exacto del descuento comercial
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT;
+    DECLARE @FechaHoy   DATE = CAST(GETDATE() AS DATE);
+
+    BEGIN TRY
+
+        -- Validación de usuario
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Normalización de filtros, todo opcional
+        SET @FiltroDescripcion  = NULLIF(TRIM(ISNULL(@FiltroDescripcion, '')), '');
+        SET @FiltroTipo         = NULLIF(TRIM(ISNULL(@FiltroTipo, '')), '');
+        SET @FiltroMarca        = NULLIF(TRIM(ISNULL(@FiltroMarca, '')), '');
+        SET @FiltroProveedor    = NULLIF(TRIM(ISNULL(@FiltroProveedor, '')), '');
+        SET @FiltroDescuento    = NULLIF(TRIM(ISNULL(@FiltroDescuento, '')), '');
+
+        SELECT
+            PRD.PRD_RutaImagen  AS [Ruta Imagen],
+            PRD.PRD_Descripcion AS [Descripción],
+            TP.TIPO_PRD_Nombre AS [Tipo Producto],
+            MP.MARC_PRD_Nombre AS [Marca],
+            PER.PER_NombreCompleto  AS [Proveedor],
+            ISNULL(D.DESC_NombreComercial, 'N/A') AS [Descuento Asignado], -- Nombre del descuento asignado al producto (independiente de si está vigente hoy)
+            CASE -- Porcentaje del descuento asignado (independiente de si está vigente hoy)
+                WHEN D.DESC_ID IS NOT NULL
+                    THEN CONVERT(VARCHAR(6), D.DESC_DescuentoPct) + '%'
+                ELSE
+                    'N/A'
+            END AS [Descuento %],
+            CASE -- Indica si el descuento asignado está activo HOY
+                WHEN D.DESC_ID IS NOT NULL
+                    AND D.DESC_Estado = 1
+                    AND @FechaHoy >= D.DESC_FechaInicio
+                    AND @FechaHoy <= D.DESC_FechaFin
+                    THEN 'Sí'
+                WHEN D.DESC_ID IS NOT NULL
+                    THEN 'No (Fuera de vigencia)'
+                ELSE
+                    'Sin descuento'
+            END AS [Descuento Vigente Hoy],
+            PRD.PRD_PrecioCompra AS [Precio Compra],
+            PRD.PRD_PrecioVenta AS [Precio Venta],
+            CASE -- Precio efectivo considerando si el descuento está vigente HOY
+                WHEN D.DESC_ID IS NOT NULL
+                    AND D.DESC_Estado = 1
+                    AND @FechaHoy >= D.DESC_FechaInicio
+                    AND @FechaHoy <= D.DESC_FechaFin
+                    THEN CAST(
+                            PRD.PRD_PrecioVenta - (PRD.PRD_PrecioVenta * D.DESC_DescuentoPct / 100.0)
+                         AS DECIMAL(10,2))
+                ELSE
+                    PRD.PRD_PrecioVenta
+            END AS [Precio Con Descuento],
+            CASE
+                WHEN PRD.PRD_Estado = 1
+                    THEN 'Activo'
+                ELSE
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.PRODUCTOS_TB PRD
+        INNER JOIN DBO.TIPOS_PRODUCTOS_TB TP
+            ON PRD.PRD_TIPO_PRD_ID = TP.TIPO_PRD_ID
+        INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP
+            ON PRD.PRD_MARC_PRD_ID = MP.MARC_PRD_ID
+        INNER JOIN DBO.PROVEEDORES_TB PRV
+            ON PRD.PRD_PRV_ID = PRV.PRV_ID
+        INNER JOIN DBO.PERSONAS_TB PER
+            ON PRV.PRV_PER_ID = PER.PER_ID
+        LEFT JOIN DBO.DESCUENTOS_TB D
+            ON PRD.PRD_DESC_ID = D.DESC_ID
+        WHERE
+            -- Filtro por descripción: búsqueda parcial (LIKE)
+            (@FiltroDescripcion IS NULL
+                OR PRD.PRD_Descripcion LIKE '%' + @FiltroDescripcion + '%')
+            -- Filtro por tipo de producto: nombre exacto
+            AND (@FiltroTipo IS NULL
+                OR TP.TIPO_PRD_Nombre = @FiltroTipo)
+            -- Filtro por marca: nombre exacto
+            AND (@FiltroMarca IS NULL
+                OR MP.MARC_PRD_Nombre = @FiltroMarca)
+            -- Filtro por proveedor: nombre exacto
+            AND (@FiltroProveedor IS NULL
+                OR PER.PER_NombreCompleto = @FiltroProveedor)
+            -- Filtro por nombre de descuento: nombre exacto
+            AND (@FiltroDescuento IS NULL
+                OR D.DESC_NombreComercial = @FiltroDescuento)
+        ORDER BY
+            TP.TIPO_PRD_Nombre,
+            MP.MARC_PRD_Nombre,
+            PRD.PRD_Descripcion;
+
+        -- Auditoría
+        BEGIN TRY
+            DECLARE @Descripcion VARCHAR(250);
+            SET @Descripcion = 'Se usó CONSULTAR_PRODUCTOS_SP';
+
+            -- Construir descripción con los filtros activos
+            IF @FiltroDescripcion IS NOT NULL
+                SET @Descripcion = @Descripcion + ' | Desc: ' + LEFT(@FiltroDescripcion, 20);
+            IF @FiltroTipo IS NOT NULL
+                SET @Descripcion = @Descripcion + ' | Tipo: ' + LEFT(@FiltroTipo, 20);
+            IF @FiltroMarca IS NOT NULL
+                SET @Descripcion = @Descripcion + ' | Marca: ' + LEFT(@FiltroMarca, 20);
+            IF @FiltroProveedor IS NOT NULL
+                SET @Descripcion = @Descripcion + ' | Prov: ' + LEFT(@FiltroProveedor, 20);
+            IF @FiltroDescuento IS NOT NULL
+                SET @Descripcion = @Descripcion + ' | Desc.Com: ' + LEFT(@FiltroDescuento, 20);
+
+            IF @FiltroDescripcion IS NULL
+                AND @FiltroTipo IS NULL
+                AND @FiltroMarca IS NULL
+                AND @FiltroProveedor IS NULL
+                AND @FiltroDescuento IS NULL
+                SET @Descripcion = @Descripcion + ' sin filtros (Todos).';
+            ELSE
+                SET @Descripcion = LEFT(@Descripcion, 247) + '.';
+
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID     = @Persona_ID,
+                @Accion         = 'SELECT',
+                @TablaAfectada  = 'PRODUCTOS_TB',
+                @FilaAfectada   = 0,
+                @Descripcion    = @Descripcion,
+                @Antes          = NULL,
+                @Despues        = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+END;
+GO
+
+EXEC CONSULTAR_PRODUCTOS_SP
+    @NombreUsuario = 'AskingMansOz';
+
+-- ==========================================
+-- Me sirve este Join
+-- ==========================================
+
+SELECT 
+    U.UBI_INV_Nombre AS [Ubicacion],
+    P.PRD_Descripcion AS [Producto],
+    I.INV_StockActual AS [Stock Actual],
+    I.INV_StockMinimo AS [Stock Mínimo],
+    CASE 
+        WHEN I.INV_Estado = 1 
+            THEN 'Activo' 
+        ELSE 
+            'Inactivo' 
+    END AS [Estado]
+FROM DBO.INVENTARIOS_TB I
+INNER JOIN DBO.UBI_INVENTARIOS_TB U 
+    ON I.INV_UBI_INV_ID = U.UBI_INV_ID
+INNER JOIN DBO.PRODUCTOS_TB P 
+    ON I.INV_PRD_ID = P.PRD_ID;
+GO
+
+
 EXEC CONSULTAR_AUDITORIAS_SP
     @NombreUsuario = 'AskingMansOz',
     @FechaFiltro = '2026-04-03',
     @TablaFiltro = 'Auditorias_TB';
 
--- CREATE OR ALTER PR-CEDURE 
+-- CREATE OR ALTER PROCEDURE 
 
 /*
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -3610,11 +3773,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	CONSULTAR_INVENTARIOS_PROVEEDORES_SP (Select y join por proveedores)
 	MODIFICAR_STOCK_MINIMO_SP (Update StockMinimo de un producto)
 
-	CONSULTAR_PRODUCTOS_SP (select con joins) -- Aplicar Filtros
-	FILTRO -- CONSULTAR_PRODUCTOS_MARCA_SP (select con join, marcas)
-	FILTRO -- CONSULTAR_PRODUCTOS_TIPO_SP (Select con join tipos)
-	FILTRO -- CONSULTAR_PRODUCTOS_PROVEEDORES_SP (Select con join proveedores)
-
+	X CONSULTAR_PRODUCTOS_SP (select con joins) -- Aplicar Filtros
 	X REGISTRAR_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento (Si aplica), se busca en inventario y en ubicación y 
 								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
 								se agrega a inventario y se le pone la cantidad agregada al registro)

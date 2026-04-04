@@ -10,13 +10,23 @@ USE XSTORE;
 GO
 
 --- INSERTS DE PRUEBA ---
--- Primer insert del sistema
+
+-- Dehabilitar Triggers para inserts semilla
+ALTER TABLE DBO.TIPOS_PERSONAS_TB DISABLE TRIGGER REGISTRAR_TIPO_PERSONA_TR;
+ALTER TABLE DBO.PERSONAS_TB DISABLE TRIGGER REGISTRAR_PERSONA_TR;
+ALTER TABLE DBO.ROLES_TB DISABLE TRIGGER REGISTRAR_ROL_TR;
+
+-- Inserts Semilla
 INSERT INTO DBO.TIPOS_PERSONAS_TB (
-    TIPO_PER_Nombre, 
-    TIPO_PER_DescuentoPct, 
-    TIPO_PER_MontoMeta
+    TIPO_PER_Nombre, TIPO_PER_DescuentoPct, TIPO_PER_MontoMeta
 ) 
-VALUES ('SISTEMA', 0.00, 0.00), ('Administrador', 20, 0);
+VALUES 
+('SISTEMA', 0.00, 0.00), 
+('Vendedor', 15, 0.00),
+('Administrador', 20.00, 0.00),  
+('Cliente Normal', 0.00, 0.00), -- ??,
+('Cliente Frecuente', 10.00, 0.00), -- ??
+('Cliente Premium', 25.00, 0.00) -- ??
 
 INSERT INTO DBO.PERSONAS_TB (
     PER_Identificacion,
@@ -39,18 +49,23 @@ VALUES (
     '87876607',
     'sebasjimearrieta@gmail.com',
     'Tejar, El Guarco',
-    2 -- Administrador
+    3 -- Administrador
 );
 
 INSERT INTO DBO.ROLES_TB (
     ROL_Nombre, ROL_Accesos
 )
 VALUES (
-    'Administrador', 'Pantalla_Menú, Pantalla_Editar_Productos, Pantalla_CRUD_Usuarios'
+    'Administrador', 'Pantallas_Administrador'
 );
 
 EXEC REGISTRAR_SESION_SP
 	@Persona_ID = 2,
 	@NombreUsuario = 'AskingMansOz',
-	@PasswordHash = '1234',
+	@PasswordHash = 'xlr8',
 	@NombreRol = 'Administrador';
+
+-- Activación de Triggers
+ALTER TABLE DBO.TIPOS_PERSONAS_TB ENABLE TRIGGER REGISTRAR_TIPO_PERSONA_TR;
+ALTER TABLE DBO.PERSONAS_TB ENABLE TRIGGER REGISTRAR_PERSONA_TR;
+ALTER TABLE DBO.ROLES_TB ENABLE TRIGGER REGISTRAR_ROL_TR;
