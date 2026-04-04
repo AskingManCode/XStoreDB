@@ -4133,12 +4133,6 @@ EXEC CONSULTAR_AUDITORIAS_SP
     (Registrar_Productos_SP) APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios) -- Va en Registrar Productos
 	(Modificar_Producto_SP) (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
 
-    -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-	X REGISTRAR_SESION_SP
-	X VERIFICAR_SESION_SP (Devuelve el nombre de Usuario para mostrarlo en la información de cuenta, sino, error, verifica que el usuario exista)
-	MODIFICAR_SESION_SP (Cambia contraseña si se cambia o nombre de usuario, Recordar NombreUsuario es UNIQUE)
-
 	FACTURAR_CLIENTE_SP (crear encabezados, referenciar cliente, agregar entrega si aplica y referenciar el estado y detallar factura, 
 						agregar productos, verificar descuentos, aplicar descuentos si existen, 
 						agregar cantidad compra al tipo de cliente, verificar suma de montos, aplicar impuestos)
