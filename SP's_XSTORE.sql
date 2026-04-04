@@ -2484,8 +2484,8 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.REGISTRAR_SESION_SP 
-    @CreadorCuenta  VARCHAR(75)  = NULL, -- NULL = auto-registro, sino lo crea un Administrador
-    @Persona_ID     INT,
+    @CreadorCuenta  VARCHAR(75)  = NULL, -- NULL = auto-registro, sino la cuenta la crea un Administrador
+    @Identificacion VARCHAR(50),         -- Identificación de la persona a la que se le crea la sesión (tiene CONSTRAINT UNIQUE)
     @NombreUsuario  VARCHAR(75),
     @PasswordHash   VARCHAR(255),
     @NombreRol      VARCHAR(50)
@@ -2496,36 +2496,40 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @CreadorCuenta_ID   INT;
+    DECLARE @Persona_ID         INT;
     DECLARE @Rol_ID             INT;
  
-    SET @NombreUsuario = TRIM(ISNULL(@NombreUsuario, ''));
-    SET @NombreRol     = TRIM(ISNULL(@NombreRol, ''));
+    SET @Identificacion = TRIM(ISNULL(@Identificacion, ''));
+    SET @NombreUsuario  = TRIM(ISNULL(@NombreUsuario, ''));
+    SET @NombreRol      = TRIM(ISNULL(@NombreRol, ''));
 
     BEGIN TRY
 
         BEGIN TRANSACTION;
 
-        -- Validación de existencia y estado de la persona destino
-        IF NOT EXISTS (
-            SELECT 1 
-            FROM DBO.PERSONAS_TB
-            WHERE PER_ID = @Persona_ID 
-                AND PER_Estado = 1
-        )
+        -- PER_ID a partir de la identificación
+        SELECT @Persona_ID = PER_ID
+        FROM DBO.PERSONAS_TB
+        WHERE PER_Identificacion = @Identificacion
+            AND PER_Estado = 1;
+
+        IF @Persona_ID IS NULL
         BEGIN
-            RAISERROR('La persona no existe o está inactiva.', 16, 1);
+            RAISERROR('Error: No existe una persona activa con la identificación [%s].', 16, 1, @Identificacion);
             RETURN;
-        END
-        
+        END;
+
+        -- la cuenta SISTEMA no puede tener sesiones creadas
+        IF @Persona_ID = 1
+        BEGIN
+            RAISERROR('Error: No se puede crear una sesión para la cuenta SISTEMA.', 16, 1);
+            RETURN;
+        END;
+
         -- Validación de permisos del creador
         IF @CreadorCuenta IS NULL
         BEGIN
-            -- Auto-registro: la persona destino debe ser válida y no ser el sistema
-            IF @Persona_ID = 1
-            BEGIN
-                RAISERROR('Esta cuenta no tiene permisos para auto-registrarse.', 16, 1);
-                RETURN;
-            END
+            -- Auto-registro: la persona se registra a sí misma
             SET @CreadorCuenta_ID = @Persona_ID;
         END
         ELSE 
@@ -2535,19 +2539,19 @@ BEGIN
             INNER JOIN DBO.ROLES_TB R 
                 ON S.SESION_ROL_ID = R.ROL_ID
             WHERE S.SESION_NombreUsuario = @CreadorCuenta
-              AND S.SESION_Estado = 1
-              AND R.ROL_Nombre = 'Administrador';
+                AND S.SESION_Estado = 1
+                AND R.ROL_Nombre = 'Administrador';
 
             IF @CreadorCuenta_ID IS NULL
             BEGIN
                 RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @CreadorCuenta);
                 RETURN;
             END;
-		END;
+        END;
 
         IF LEN(@NombreUsuario) < 1
         BEGIN
-            RAISERROR('El nombre de usuario no puede estar vacío.', 16, 1);
+            RAISERROR('Error: El nombre de usuario no puede estar vacío.', 16, 1);
             RETURN;
         END;
 
@@ -2564,30 +2568,31 @@ BEGIN
 
         -- Validación de hash 
         IF LEN(@PasswordHash) < 1
-		BEGIN
-            RAISERROR('Hash de la contraseña no válido.', 16, 1);
+        BEGIN
+            RAISERROR('Error: Hash de la contraseña no válido.', 16, 1);
             RETURN;
-		END
+        END;
 
         -- Obtener ID del rol
         SELECT @Rol_ID = ROL_ID 
         FROM DBO.ROLES_TB 
-        WHERE ROL_Nombre = @NombreRol;
+        WHERE ROL_Nombre = @NombreRol
+            AND ROL_Estado = 1;
  
         IF @Rol_ID IS NULL
         BEGIN
-            RAISERROR('Error: El rol [%s] no existe.', 16, 1, @NombreRol);
+            RAISERROR('Error: El rol [%s] no existe o está inactivo.', 16, 1, @NombreRol);
             RETURN;
         END;
 
-        -- Restricción: rol 'Sistema' solo para persona ID 1
-        IF @NombreRol = 'SISTEMA' AND @Persona_ID != 1
+        -- Restricción: rol 'Sistema' reservado
+        IF UPPER(@NombreRol) = 'SISTEMA'
         BEGIN
             RAISERROR('Error: El rol Sistema está reservado para la cuenta del sistema.', 16, 1);
             RETURN;
         END;
 
-        -- Validación de unicidad de rol por persona (antes del INSERT)
+        -- Validación de unicidad de rol por persona
         IF EXISTS (
             SELECT 1 
             FROM DBO.SESIONES_TB
@@ -2595,11 +2600,10 @@ BEGIN
                 AND SESION_ROL_ID = @Rol_ID
         )
         BEGIN
-            RAISERROR('La persona ya tiene una sesión registrada con el rol [%s].', 16, 1, @NombreRol);
+            RAISERROR('Error: La persona ya tiene una sesión registrada con el rol [%s].', 16, 1, @NombreRol);
             RETURN;
         END;
 
-        -- Registrar sesión
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @CreadorCuenta_ID;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_SESION_SP';
  
@@ -2614,16 +2618,16 @@ BEGIN
     END TRY
     BEGIN CATCH
 
-		IF @@TRANCOUNT > 0 ROLLBACK;
+        IF @@TRANCOUNT > 0 ROLLBACK;
 
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
 
-		DECLARE @ErrorMessage	NVARCHAR(4000)	= ERROR_MESSAGE();
-		DECLARE @ErrorSeverity	INT				= ERROR_SEVERITY();
-		DECLARE @ErrorState		INT				= ERROR_STATE();
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
 
-		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
 
     END CATCH
 END;
@@ -3968,17 +3972,6 @@ EXEC CONSULTAR_AUDITORIAS_SP
 	X REGISTRAR_SESION_SP
 	X VERIFICAR_SESION_SP (Devuelve el nombre de Usuario para mostrarlo en la información de cuenta, sino, error, verifica que el usuario exista)
 	MODIFICAR_SESION_SP (Cambia contraseña si se cambia o nombre de usuario, Recordar NombreUsuario es UNIQUE)
-
-	-------------------------------------------------------------------------------------------------------------------------------------------------------
-
-	X CONSULTAR_PERSONAS_SP (Select join con tipo_persona, vendedor(empleados) o administradores o proveedores, o todo junto)
-
-	X REGISTRAR_USUARIO_SP (Insert a personas que usa tipo_personaID, insert a sesiones que usa rolID y personaID (Entra como varchar y busca el ID para asignarlo a la tabla), 
-							Rol Administrador, Vendedor(Empleado) o Cliente, si los datos ya existen y es un proveedor previamente registrado se le puede 
-							agregar como rol cliente a este proveedor para que haga compras en caso de que decida ser cliente)
-
-	MODIFICAR_PERSONA_SP (Update a personas, proveedores, clientes, administradores) -- El tipo de persona no se cambia porque se hará automático según las comprás realizadas
-	-------------------------------------------------------------------------------------------------------------------------------------------------------
 
 	FACTURAR_CLIENTE_SP (crear encabezados, referenciar cliente, agregar entrega si aplica y referenciar el estado y detallar factura, 
 						agregar productos, verificar descuentos, aplicar descuentos si existen, 
