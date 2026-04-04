@@ -175,10 +175,10 @@ BEGIN
         WHERE (@FechaFiltro IS NULL OR CAST(A.AUD_FechaHora AS DATE) = @FechaFiltro)
             AND (@TablaFiltro IS NULL OR A.AUD_TablaAfectada = UPPER(TRIM(@TablaFiltro)))
         ORDER BY A.AUD_FechaHora DESC; -- Fechas recientes primero
-		
+
         SET @Descripcion = 'Se usó CONSULTAR_AUDITORIAS_SP' + 
             CASE 
-                WHEN @TablaFiltro != '' 
+                WHEN ISNULL(@TablaFiltro, '') != '' 
                     THEN ' con filtro [' + @TablaFiltro + '].'
                 ELSE 
                     ' sin filtro específico (Todos).'
@@ -1829,12 +1829,11 @@ BEGIN
         INNER JOIN DBO.ROLES_TB R
             ON S.SESION_ROL_ID = R.ROL_ID
         WHERE S.SESION_NombreUsuario = @NombreUsuario
-          AND S.SESION_Estado = 1
-          AND R.ROL_Nombre = 'Administrador';
+          AND S.SESION_Estado = 1;
 
         IF @Persona_ID IS NULL
         BEGIN
-            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
             RETURN;
         END;
 
@@ -2070,10 +2069,11 @@ BEGIN
                 SELECT 1
                 FROM DBO.PERSONAS_TB
                 WHERE PER_TIPO_PER_ID = @Tipo_Per_ID 
-					AND PER_Estado = 1
+                    AND PER_Estado = 1
             )
             BEGIN
                 RAISERROR('No se puede desactivar el tipo de persona porque hay personas activas que lo usan.', 16, 1);
+                RETURN;
             END
         END */
 
@@ -3348,7 +3348,6 @@ BEGIN
     DECLARE @MARC_PRD_ID INT;
     DECLARE @PRV_ID      INT;
     DECLARE @PRD_ID      INT;
-    DECLARE @INV_ID      INT;
     DECLARE @UBI_INV_ID  INT;
     DECLARE @DESC_ID     INT;
     DECLARE @StockActual INT;
@@ -3508,8 +3507,7 @@ BEGIN
             FROM DBO.DESCUENTOS_TB
             WHERE DESC_NombreComercial = @NombreDescuento
                 AND DESC_Estado = 1
-                AND @FechaHoy <= DESC_FechaInicio
-                AND @FechaHoy < DESC_FechaFin;
+                AND @FechaHoy <= DESC_FechaFin;
 
             IF @DESC_ID IS NULL
             BEGIN
@@ -3530,17 +3528,6 @@ BEGIN
         )
         BEGIN
             RAISERROR('Error: Ya existe un producto con la misma descripción, tipo, marca y proveedor.', 16, 1);
-            RETURN;
-        END;
-
-        SELECT @INV_ID = INV_ID
-        FROM DBO.INVENTARIOS_TB
-        WHERE INV_PRD_ID = @PRD_ID
-            AND INV_UBI_INV_ID = @UBI_INV_ID;
-
-        IF @INV_ID IS NOT NULL
-        BEGIN
-            RAISERROR('Error: Ya existe un registro de inventario para este producto en la ubicación indicada.', 16, 1);
             RETURN;
         END;
 
@@ -3608,7 +3595,12 @@ BEGIN
 END;
 GO
 
--- CREATE OR ALTER PROCEDURE 
+EXEC CONSULTAR_AUDITORIAS_SP
+    @NombreUsuario = 'AskingMansOz',
+    @FechaFiltro = '2026-04-03',
+    @TablaFiltro = 'Auditorias_TB';
+
+-- CREATE OR ALTER PR-CEDURE 
 
 /*
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
