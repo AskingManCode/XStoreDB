@@ -128,7 +128,10 @@ BEGIN
         -- UNIQUES
 
         CONSTRAINT UQ_PER_Identificacion
-            UNIQUE(PER_Identificacion)
+            UNIQUE(PER_Identificacion),
+
+        CONSTRAINT UQ_PER_Correo
+            UNIQUE(PER_Correo)
     ); 
 END
 GO
