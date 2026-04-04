@@ -1823,19 +1823,20 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_PERSONAS_SP
-    @NombreUsuario  VARCHAR(75),             -- Responsable
-    @Filtro         VARCHAR(20)     = NULL,  -- Administradores, Vendedores, Clientes, Proveedores, Null = Todos
-    @Busqueda       VARCHAR(100)    = NULL   -- Búsqueda parcial en Identificación, Nombre, Correo, Teléfono
-AS
+    @NombreUsuario      VARCHAR(75),
+    @RolFiltro          VARCHAR(20)   = NULL,  -- Administradores, Vendedores, Clientes, Proveedores, NULL = Todos
+    @TipoPersonaFiltro  VARCHAR(50)   = NULL,  -- Nombre exacto del tipo de persona, NULL = Todos
+    @Busqueda           VARCHAR(100)  = NULL   -- Búsqueda parcial: Identificación, Nombre, Correo, Teléfono, NombreUsuario
+AS 
 BEGIN
 
     SET NOCOUNT ON;
 
-    DECLARE @Persona_ID INT;
-    DECLARE @BusquedaLike VARCHAR(102);
-    DECLARE @Descripcion VARCHAR(250);
+    DECLARE @Persona_ID     INT;
+    DECLARE @BusquedaLike   VARCHAR(102);
+    DECLARE @Descripcion    VARCHAR(250);
 
-    SET @Filtro = UPPER(TRIM(ISNULL(@Filtro, '')));
+    SET @RolFiltro = UPPER(TRIM(ISNULL(@RolFiltro, '')));
 
     BEGIN TRY
 
@@ -1857,28 +1858,27 @@ BEGIN
         IF @Busqueda IS NOT NULL
             SET @BusquedaLike = '%' + TRIM(@Busqueda) + '%';
 
-        -- Filtro inválido
-        IF @Filtro NOT IN ('ADMINISTRADORES', 'VENDEDORES', 'CLIENTES', 'PROVEEDORES', '')
+        -- Filtro de rol inválido
+        IF @RolFiltro NOT IN ('ADMINISTRADORES', 'VENDEDORES', 'CLIENTES', 'PROVEEDORES', '')
         BEGIN
-            RAISERROR('Error: Filtro [%s] no válido. Use: Administradores, Vendedores, Clientes, Proveedores o deje vacío para mostrar a todos.', 16, 1, @Filtro);
+            RAISERROR('Error: Filtro [%s] no válido. Use: Administradores, Vendedores, Clientes, Proveedores o deje vacío para mostrar a todos.', 16, 1, @RolFiltro);
             RETURN;
         END;
 
-        -- Personas con roles (Administradores, Vendedores, Clientes)
+        -- Personas con sesión (Administradores, Vendedores, Clientes)
         SELECT 
-            P.PER_ID AS [ID Persona]
-            , P.PER_Identificacion AS [Identificación]
+            P.PER_Identificacion AS [Identificación]
             , P.PER_NombreCompleto AS [Nombre Completo]
             , P.PER_Telefono AS [Teléfono]
             , P.PER_Correo AS [Correo]
             , P.PER_Direccion AS [Dirección]
-            , TP.TIPO_PER_Nombre AS [Tipo Descuento]
+            , TP.TIPO_PER_Nombre AS [Tipo Persona]
             , CONVERT(VARCHAR(5), TP.TIPO_PER_DescuentoPct) + '%' AS [Descuento %]
             , R.ROL_Nombre AS [Rol]
             , S.SESION_NombreUsuario AS [Nombre Usuario]
             , CONVERT(VARCHAR(10), P.PER_FechaRegistro, 120) AS [Fecha Registro]
             , CASE 
-                WHEN P.PER_Estado = 1 AND S.SESION_Estado = 1 AND R.ROL_Estado = 1
+                WHEN P.PER_Estado = 1
                     THEN 'Activo'
                 ELSE 
                     'Inactivo'
@@ -1891,25 +1891,32 @@ BEGIN
         INNER JOIN DBO.ROLES_TB R
             ON S.SESION_ROL_ID = R.ROL_ID
         WHERE P.PER_ID != 1  -- Reservado para SISTEMA
-            AND (@Filtro = '' -- Filtro aplicado
-                OR (@Filtro = 'ADMINISTRADORES' AND R.ROL_Nombre = 'Administrador')
-                OR (@Filtro = 'VENDEDORES' AND R.ROL_Nombre = 'Vendedor')
-                OR (@Filtro = 'CLIENTES' AND R.ROL_Nombre = 'Cliente'))
-            AND (@Busqueda IS NULL -- Filtro de búsqueda específica
+            AND (   -- Filtro por rol
+                @RolFiltro = ''
+                OR (@RolFiltro = 'ADMINISTRADORES' AND R.ROL_Nombre = 'Administrador')
+                OR (@RolFiltro = 'VENDEDORES' AND R.ROL_Nombre = 'Vendedor')
+                OR (@RolFiltro = 'CLIENTES' AND R.ROL_Nombre = 'Cliente')
+            )
+            AND (   -- Filtro por tipo de persona
+                @TipoPersonaFiltro IS NULL
+                OR TP.TIPO_PER_Nombre = @TipoPersonaFiltro
+            )
+            AND (   -- Filtro de búsqueda
+                @Busqueda IS NULL
                 OR P.PER_Identificacion LIKE @BusquedaLike
                 OR P.PER_NombreCompleto LIKE @BusquedaLike
                 OR P.PER_Correo LIKE @BusquedaLike
-                OR P.PER_Telefono LIKE @BusquedaLike)
+                OR P.PER_Telefono LIKE @BusquedaLike
+                OR S.SESION_NombreUsuario LIKE @BusquedaLike
+            )
         UNION ALL
-        -- Proveedores 
-        SELECT 
-            P.PER_ID AS [ID Persona]
-            , P.PER_Identificacion AS [Identificación]
+        SELECT -- Proveedores sin sesión
+            P.PER_Identificacion AS [Identificación]
             , P.PER_NombreCompleto AS [Nombre Completo]
             , P.PER_Telefono AS [Teléfono]
             , P.PER_Correo AS [Correo]
             , P.PER_Direccion AS [Dirección]
-            , TP.TIPO_PER_Nombre AS [Tipo Descuento]
+            , TP.TIPO_PER_Nombre AS [Tipo Persona]
             , CONVERT(VARCHAR(5), TP.TIPO_PER_DescuentoPct) + '%' AS [Descuento %]
             , 'Proveedor' AS [Rol]
             , 'N/A' AS [Nombre Usuario]
@@ -1925,31 +1932,47 @@ BEGIN
             ON P.PER_TIPO_PER_ID = TP.TIPO_PER_ID
         INNER JOIN DBO.PROVEEDORES_TB PRV
             ON P.PER_ID = PRV.PRV_PER_ID
-        WHERE P.PER_ID != 1  -- Reservado para SISTEMA
-            AND (@Filtro IN ('PROVEEDORES', '') -- Filtro específico para proveedores
-                AND (
-                    @Filtro = 'PROVEEDORES'  
-                        OR @Filtro = ''  -- Siempre mostrar proveedores en filtro vacío también
-                ))
-            AND (@Busqueda IS NULL -- Filtro de búsqueda específica
+        -- Excluir proveedores que YA tienen sesión (ya aparecen arriba)
+        WHERE P.PER_ID != 1
+            AND NOT EXISTS (
+                SELECT 1
+                FROM DBO.SESIONES_TB S2
+                WHERE S2.SESION_PER_ID = P.PER_ID
+            )
+            AND (   -- Filtro por rol: proveedores solo aparecen en '' o 'PROVEEDORES'
+                @RolFiltro IN ('PROVEEDORES', '')
+            )
+            AND (   -- Filtro por tipo de persona
+                @TipoPersonaFiltro IS NULL
+                OR TP.TIPO_PER_Nombre = @TipoPersonaFiltro
+            )
+            AND (   -- Filtro de búsqueda (sin nombre de usuario porque no tienen)
+                @Busqueda IS NULL
                 OR P.PER_Identificacion LIKE @BusquedaLike
                 OR P.PER_NombreCompleto LIKE @BusquedaLike
-                OR P.PER_Correo LIKE @BusquedaLike
-                OR P.PER_Telefono LIKE @BusquedaLike)
-        ORDER BY [ID Persona], [Nombre Completo], [Rol];
+                OR P.PER_Correo         LIKE @BusquedaLike
+                OR P.PER_Telefono       LIKE @BusquedaLike
+            )
+        ORDER BY [Nombre Completo], [Rol];
 
+        -- Auditoría
         BEGIN TRY
-            SET @Descripcion = 'Se usó CONSULTAR_PERSONAS_SP' + 
-                CASE 
-                    WHEN @Filtro != '' 
-                        THEN ' con filtro [' + @Filtro + '].'
-                    ELSE 
-                        ' sin filtro específico (Todos).'
-                END;
+            SET @Descripcion = 'Se usó CONSULTAR_PERSONAS_SP';
+
+            IF @RolFiltro != ''
+                SET @Descripcion = @Descripcion + ' con filtro de rol [' + @RolFiltro + ']';
+
+            IF @TipoPersonaFiltro IS NOT NULL
+                SET @Descripcion = @Descripcion + ', tipo de persona [' + LEFT(@TipoPersonaFiltro, 20) + ']';
 
             IF @Busqueda IS NOT NULL
-                SET @Descripcion = LEFT(@Descripcion, 230) + ' Búsqueda: ' + LEFT(@Busqueda, 15) + '.';
-        
+                SET @Descripcion = @Descripcion + ', búsqueda específica [' + LEFT(@Busqueda, 15) + ']';
+
+            IF @RolFiltro = '' AND @TipoPersonaFiltro IS NULL AND @Busqueda IS NULL
+                SET @Descripcion = @Descripcion + ' sin filtro específico (Todos).';
+            ELSE
+                SET @Descripcion = @Descripcion + '.';
+
             EXEC DBO.REGISTRAR_AUDITORIA_SP
                 @Persona_ID     = @Persona_ID,
                 @Accion         = 'SELECT',
@@ -2156,6 +2179,242 @@ BEGIN
 		RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState)
 
     END CATCH;
+END;
+GO
+
+
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_PERSONA_SP
+    @NombreUsuario      VARCHAR(75),            -- Responsable
+    @Identificacion     VARCHAR(50),            -- Identificador para ubicar a la persona
+    @NuevoNombre        VARCHAR(150)  = NULL,
+    @NuevoTelefono      VARCHAR(25)   = NULL,   -- '' = borrar teléfono  -- NULL no se modifica
+    @NuevoCorreo        VARCHAR(150)  = NULL,   -- '' = borrar correo    -- NULL no se modifica
+    @NuevaDireccion     VARCHAR(175)  = NULL,   -- '' = borrar dirección -- NULL no se modifica
+    @NuevoTipoPersona   VARCHAR(50)   = NULL,   -- Solo Administrador puede modificarlo
+    @NuevoEstado        BIT           = NULL    -- Solo Administrador puede modificarlo
+AS
+BEGIN
+
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID         INT;
+    DECLARE @PER_ID             INT;
+    DECLARE @EsAdministrador    BIT  = 0;
+    DECLARE @Tipo_Per_ID        INT;
+
+    -- Normalización
+    SET @Identificacion     = TRIM(ISNULL(@Identificacion, ''));
+    SET @NuevoNombre        = NULLIF(TRIM(ISNULL(@NuevoNombre, '')), '');
+
+    -- Teléfono, Correo y Dirección: NULL = no tocar, '' = borrar, valor = actualizar
+    -- No se normalizan a NULL aquí para distinguir '' intencional de no enviado
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de usuario activo y detección de rol
+        SELECT
+            @Persona_ID = S.SESION_PER_ID,
+            @EsAdministrador = CASE WHEN R.ROL_Nombre = 'Administrador' THEN 1 ELSE 0 END
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Solo Administrador puede modificar el tipo de persona
+        IF @NuevoTipoPersona IS NOT NULL AND @EsAdministrador = 0
+        BEGIN
+            RAISERROR('Acceso denegado: Solo un Administrador puede modificar el tipo de persona.', 16, 1);
+            RETURN;
+        END;
+
+        IF @NuevoEstado IS NOT NULL AND @EsAdministrador = 0
+        BEGIN
+            RAISERROR('Acceso denegado: Solo un Administrador puede modificar el estado de la cuenta.', 16, 1);
+            RETURN;
+        END;
+
+        -- Obtener ID de la persona a modificar
+        SELECT @PER_ID = PER_ID
+        FROM DBO.PERSONAS_TB
+        WHERE PER_Identificacion = @Identificacion;
+
+        IF @PER_ID IS NULL
+        BEGIN
+            RAISERROR('Error: No existe una persona con la identificación [%s].', 16, 1, @Identificacion);
+            RETURN;
+        END;
+
+        -- Protección: nadie puede modificar la cuenta SISTEMA
+        IF @PER_ID = 1
+        BEGIN
+            RAISERROR('No se permite modificar la cuenta SISTEMA.', 16, 1);
+            RETURN;
+        END;
+
+        -- Un persona que no es administrador solo puede modificar su propia cuenta
+        IF @EsAdministrador = 0 AND @Persona_ID != @PER_ID
+        BEGIN
+            RAISERROR('Acceso denegado: Solo puede modificar su propia cuenta.', 16, 1);
+            RETURN;
+        END;
+
+        -- Detección de "nada que modificar"
+        IF @NuevoNombre IS NULL
+            AND @NuevoTelefono IS NULL
+            AND @NuevoCorreo IS NULL
+            AND @NuevaDireccion IS NULL
+            AND @NuevoTipoPersona IS NULL
+            AND @NuevoEstado IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para la persona con identificación [%s].', 16, 1, @Identificacion);
+            RETURN;
+        END;
+
+        -- Validar nuevo nombre si se proporcionó
+        IF @NuevoNombre IS NOT NULL AND LEN(@NuevoNombre) = 0
+        BEGIN
+            RAISERROR('Error: El nombre completo no puede estar vacío.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar que al borrar teléfono o correo no quede sin ningún contacto
+        IF @NuevoTelefono = '' OR @NuevoCorreo = ''
+        BEGIN
+            DECLARE @TelefonoFinal VARCHAR(25);
+            DECLARE @CorreoFinal VARCHAR(150);
+
+            SELECT
+                @TelefonoFinal = PER_Telefono,
+                @CorreoFinal   = PER_Correo
+            FROM DBO.PERSONAS_TB
+            WHERE PER_ID = @PER_ID;
+
+            IF @NuevoTelefono IS NOT NULL SET @TelefonoFinal = NULLIF(@NuevoTelefono, '');
+            IF @NuevoCorreo   IS NOT NULL SET @CorreoFinal = NULLIF(@NuevoCorreo, '');
+
+            IF @TelefonoFinal IS NULL AND @CorreoFinal IS NULL
+            BEGIN
+                RAISERROR('Error: La persona debe tener al menos un medio de contacto (teléfono o correo).', 16, 1);
+                RETURN;
+            END;
+        END;
+
+        -- Validar correo único si se va a cambiar
+        IF @NuevoCorreo IS NOT NULL AND @NuevoCorreo != ''
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.PERSONAS_TB
+                WHERE PER_Correo = @NuevoCorreo
+                    AND PER_ID != @PER_ID
+            )
+            BEGIN
+                RAISERROR('Error: Ya existe una persona registrada con el correo [%s].', 16, 1, @NuevoCorreo);
+                RETURN;
+            END;
+        END;
+
+        -- Resolver ID del nuevo tipo de persona si se indicó
+        IF @NuevoTipoPersona IS NOT NULL
+        BEGIN
+            SET @NuevoTipoPersona = TRIM(@NuevoTipoPersona);
+
+            IF @NuevoTipoPersona = 'SISTEMA'
+            BEGIN
+                RAISERROR('Error: No se puede asignar el tipo de persona SISTEMA.', 16, 1);
+                RETURN;
+            END;
+
+            SELECT @Tipo_Per_ID = TIPO_PER_ID
+            FROM DBO.TIPOS_PERSONAS_TB
+            WHERE TIPO_PER_Nombre = @NuevoTipoPersona
+                AND TIPO_PER_Estado = 1;
+
+            IF @Tipo_Per_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El tipo de persona [%s] no existe o está inactivo.', 16, 1, @NuevoTipoPersona);
+                RETURN;
+            END;
+        END;
+
+        -- Validación para desactivar una persona en uso
+        /*IF @NuevoEstado = 0
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.SESIONES_TB
+                WHERE SESION_PER_ID = @PER_ID
+                    AND SESION_Estado = 1
+            )
+            BEGIN
+                RAISERROR('No se puede desactivar la persona porque tiene sesiones activas.', 16, 1);
+                RETURN;
+            END;
+        END;*/
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_PERSONA_SP';
+
+        UPDATE DBO.PERSONAS_TB
+        SET
+            PER_NombreCompleto  = ISNULL(@NuevoNombre,      PER_NombreCompleto),
+            PER_Telefono = CASE 
+                               WHEN @NuevoTelefono IS NULL 
+                                   THEN PER_Telefono   -- No tocar
+                               WHEN @NuevoTelefono = ''    
+                                   THEN NULL           -- Borrar
+                               ELSE 
+                                   @NuevoTelefono      -- Actualizar
+                           END,
+            PER_Correo = CASE
+                               WHEN @NuevoCorreo IS NULL   
+                                   THEN PER_Correo     -- No tocar
+                               WHEN @NuevoCorreo = ''      
+                                   THEN NULL           -- Borrar
+                               ELSE 
+                                   @NuevoCorreo        -- Actualizar
+                         END,
+            PER_Direccion = CASE
+                               WHEN @NuevaDireccion IS NULL 
+                                   THEN PER_Direccion -- No tocar
+                               WHEN @NuevaDireccion = ''    
+                                   THEN NULL          -- Borrar
+                               ELSE @NuevaDireccion   -- Actualizar
+                         END,
+            PER_TIPO_PER_ID = ISNULL(@Tipo_Per_ID, PER_TIPO_PER_ID),
+            PER_Estado = ISNULL(@NuevoEstado, PER_Estado)
+        WHERE PER_ID = @PER_ID;
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage   NVARCHAR(4000)  = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity  INT             = ERROR_SEVERITY();
+        DECLARE @ErrorState     INT             = ERROR_STATE();
+
+        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
 END;
 GO
 
@@ -3670,8 +3929,6 @@ INNER JOIN DBO.PRODUCTOS_TB P
     ON I.INV_PRD_ID = P.PRD_ID;
 GO
 
-EXEC CONSULTAR_PERSONAS_SP
-    @NombreUsuario = 'AskingMansOz';
 
 EXEC CONSULTAR_AUDITORIAS_SP
     @NombreUsuario = 'AskingMansOz',
