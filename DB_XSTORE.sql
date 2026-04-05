@@ -301,7 +301,7 @@ BEGIN
         CONSTRAINT CK_CAT_DESC_Nombre
             CHECK(LEN(TRIM(CAT_DESC_Nombre)) > 0
                     AND CAT_DESC_Nombre NOT LIKE ' %'
-                    AND CAT_DESC_Nombre NOT LIKE ' %'
+                    AND CAT_DESC_Nombre NOT LIKE '% '
                     AND CAT_DESC_Nombre NOT LIKE '%  %'),
 
         -- UNIQUES

@@ -3668,17 +3668,16 @@ BEGIN
     DECLARE @PRD_ID      INT;
     DECLARE @UBI_INV_ID  INT;
     DECLARE @DESC_ID     INT;
-    DECLARE @StockActual INT;
     DECLARE @FechaHoy    DATE = CAST(GETDATE() AS DATE);
 
-    -- Normalizado
-    SET @RutaImagen       = TRIM(ISNULL(@RutaImagen, ''));
-    SET @Descripcion      = TRIM(ISNULL(@Descripcion, ''));
-    SET @TipoProducto     = TRIM(ISNULL(@TipoProducto, ''));
-    SET @MarcaProducto    = TRIM(ISNULL(@MarcaProducto, ''));
-    SET @NombreProveedor  = TRIM(ISNULL(@NombreProveedor, ''));
-    SET @NombreUbicacion  = TRIM(ISNULL(@NombreUbicacion, ''));
-    SET @NombreDescuento  = NULLIF(TRIM(@NombreDescuento), '');
+    -- Normalización
+    SET @RutaImagen      = TRIM(ISNULL(@RutaImagen, ''));
+    SET @Descripcion     = TRIM(ISNULL(@Descripcion, ''));
+    SET @TipoProducto    = TRIM(ISNULL(@TipoProducto, ''));
+    SET @MarcaProducto   = TRIM(ISNULL(@MarcaProducto, ''));
+    SET @NombreProveedor = TRIM(ISNULL(@NombreProveedor, ''));
+    SET @NombreUbicacion = TRIM(ISNULL(@NombreUbicacion, ''));
+    SET @NombreDescuento = NULLIF(TRIM(@NombreDescuento), '');
 
     BEGIN TRY
         
@@ -3699,7 +3698,7 @@ BEGIN
             RETURN;
         END;
 
-        -- Validación de parametros
+        -- Validación de parámetros
         IF LEN(@RutaImagen) = 0
         BEGIN
             RAISERROR('Error: La ruta de imagen no puede estar vacía.', 16, 1);
@@ -3789,7 +3788,7 @@ BEGIN
         BEGIN
             RAISERROR('Error: La marca [%s] no existe o está inactiva.', 16, 1, @MarcaProducto);
             RETURN;
-        END
+        END;
 
         -- Proveedor
         SELECT @PRV_ID = PRV.PRV_ID
@@ -3831,64 +3830,88 @@ BEGIN
             BEGIN
                 RAISERROR('Error: El descuento [%s] no existe, está inactivo o no está vigente.', 16, 1, @NombreDescuento);
                 RETURN;
-            END;            
+            END;
         END;
 
-        -- Verificar si el producto ya existe
-        IF EXISTS (
-            SELECT 1
-            FROM DBO.PRODUCTOS_TB
-            WHERE PRD_Descripcion = @Descripcion
-                AND PRD_RutaImagen = @RutaImagen
-                AND PRD_TIPO_PRD_ID = @TIPO_PRD_ID
-                AND PRD_MARC_PRD_ID = @MARC_PRD_ID
-                AND PRD_PRV_ID = @PRV_ID
-        )
-        BEGIN
-            RAISERROR('Error: Ya existe un producto con la misma descripción, tipo, marca y proveedor.', 16, 1);
-            RETURN;
-        END;
+        -- Intentar obtener el PRD_ID si el producto ya existe
+        SELECT @PRD_ID = PRD_ID
+        FROM DBO.PRODUCTOS_TB
+        WHERE PRD_Descripcion  = @Descripcion
+            AND PRD_TIPO_PRD_ID = @TIPO_PRD_ID
+            AND PRD_MARC_PRD_ID = @MARC_PRD_ID
+            AND PRD_PRV_ID      = @PRV_ID;
 
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'REGISTRAR_PRODUCTO_SP';
 
-        -- Nuevo producto
-        INSERT INTO DBO.PRODUCTOS_TB (
-            PRD_RutaImagen,
-            PRD_Descripcion,
-            PRD_TIPO_PRD_ID,
-            PRD_MARC_PRD_ID,
-            PRD_PRV_ID,
-            PRD_DESC_ID,
-            PRD_PrecioCompra,
-            PRD_PrecioVenta
-        )
-        VALUES (
-            @RutaImagen,
-            @Descripcion,
-            @TIPO_PRD_ID,
-            @MARC_PRD_ID,
-            @PRV_ID,
-            @DESC_ID,       -- NULL si no se especificó descuento
-            @PrecioCompra,
-            @PrecioVenta
-        );
+        IF @PRD_ID IS NULL
+        BEGIN
+            -- Producto Nuevo
+            INSERT INTO DBO.PRODUCTOS_TB (
+                PRD_RutaImagen,
+                PRD_Descripcion,
+                PRD_TIPO_PRD_ID,
+                PRD_MARC_PRD_ID,
+                PRD_PRV_ID,
+                PRD_DESC_ID,
+                PRD_PrecioCompra,
+                PRD_PrecioVenta
+            )
+            VALUES (
+                @RutaImagen,
+                @Descripcion,
+                @TIPO_PRD_ID,
+                @MARC_PRD_ID,
+                @PRV_ID,
+                @DESC_ID,
+                @PrecioCompra,
+                @PrecioVenta
+            );
 
-        SET @PRD_ID = SCOPE_IDENTITY();
+            SET @PRD_ID = SCOPE_IDENTITY();
 
-        -- Insert a Inventario
-        INSERT INTO DBO.INVENTARIOS_TB (
-            INV_UBI_INV_ID,
-            INV_PRD_ID,
-            INV_StockMinimo,
-            INV_StockActual
-        )
-        VALUES (
-            @UBI_INV_ID,
-            @PRD_ID,
-            @StockMinimo,
-            @CantidadIngreso
-        );
+            INSERT INTO DBO.INVENTARIOS_TB (
+                INV_UBI_INV_ID,
+                INV_PRD_ID,
+                INV_StockMinimo,
+                INV_StockActual
+            )
+            VALUES (
+                @UBI_INV_ID,
+                @PRD_ID,
+                @StockMinimo,
+                @CantidadIngreso
+            );
+        END
+        ELSE
+        BEGIN
+            -- El producto ya existe; verificar si ya está registrado en la ubicación indicada
+            IF EXISTS (
+                SELECT 1
+                FROM DBO.INVENTARIOS_TB
+                WHERE INV_PRD_ID     = @PRD_ID
+                    AND INV_UBI_INV_ID = @UBI_INV_ID
+            )
+            BEGIN
+                -- Producto registrado en la ubicación indicada
+                RAISERROR('Error: El producto ya está registrado en la ubicación [%s].', 16, 1, @NombreUbicacion);
+                RETURN;
+            END;
+
+            -- Producto existe pero ubicación diferente
+            INSERT INTO DBO.INVENTARIOS_TB (
+                INV_UBI_INV_ID,
+                INV_PRD_ID,
+                INV_StockMinimo,
+                INV_StockActual
+            )
+            VALUES (
+                @UBI_INV_ID,
+                @PRD_ID,
+                @StockMinimo,
+                @CantidadIngreso
+            );
+        END;
 
         COMMIT;
 
