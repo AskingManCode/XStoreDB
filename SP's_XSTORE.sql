@@ -4103,27 +4103,125 @@ END;
 GO
 
 
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_INVENTARIO_SP
+    @NombreUsuario      VARCHAR(75),
+    @FiltroUbicacion    VARCHAR(75) = NULL  -- NULL = todas las ubicaciones
+AS
+BEGIN
 
--- Me sirve este select para Inventarios 
--- Filtrar Por Ubicación o Producto
-SELECT 
-    U.UBI_INV_Nombre AS [Ubicacion],
-    P.PRD_Descripcion AS [Producto],
-    I.INV_StockActual AS [Stock Actual],
-    I.INV_StockMinimo AS [Stock Mínimo],
-    CASE 
-        WHEN I.INV_Estado = 1 
-            THEN 'Activo' 
-        ELSE 
-            'Inactivo' 
-    END AS [Estado]
-FROM DBO.INVENTARIOS_TB I
-INNER JOIN DBO.UBI_INVENTARIOS_TB U 
-    ON I.INV_UBI_INV_ID = U.UBI_INV_ID
-INNER JOIN DBO.PRODUCTOS_TB P 
-    ON I.INV_PRD_ID = P.PRD_ID;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID  INT;
+    DECLARE @Descripcion VARCHAR(250);
+
+    SET @FiltroUbicacion = NULLIF(TRIM(ISNULL(@FiltroUbicacion, '')), '');
+
+    BEGIN TRY
+
+        -- Validación de usuario activo
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Validar que la ubicación existe si se especificó
+        IF @FiltroUbicacion IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM DBO.UBI_INVENTARIOS_TB
+                WHERE UBI_INV_Nombre = @FiltroUbicacion
+            )
+        BEGIN
+            RAISERROR('Error: La ubicación [%s] no existe.', 16, 1, @FiltroUbicacion);
+            RETURN;
+        END;
+
+        SELECT
+            U.UBI_INV_Nombre AS [Ubicación],
+            P.PRD_Descripcion AS [Producto],
+            I.INV_StockActual AS [Stock Actual],
+            I.INV_StockMinimo AS [Stock Mínimo],
+            CASE
+                WHEN I.INV_StockActual = 0 
+                    THEN 'Sin stock'
+                WHEN I.INV_StockActual <= I.INV_StockMinimo 
+                    THEN 'Stock bajo'
+                ELSE 
+                    'OK'
+            END AS [Alerta],
+            CASE
+                WHEN I.INV_Estado = 1 
+                    THEN 'Activo'
+                ELSE 
+                    'Inactivo'
+            END AS [Estado]
+        FROM DBO.INVENTARIOS_TB I
+        INNER JOIN DBO.UBI_INVENTARIOS_TB U
+            ON I.INV_UBI_INV_ID = U.UBI_INV_ID
+        INNER JOIN DBO.PRODUCTOS_TB P
+            ON I.INV_PRD_ID = P.PRD_ID
+        WHERE
+            (@FiltroUbicacion IS NULL OR U.UBI_INV_Nombre = @FiltroUbicacion)
+        ORDER BY
+            -- Alertas críticas primero, luego por ubicación y producto
+            CASE
+                WHEN I.INV_StockActual = 0 
+                    THEN 0
+                WHEN I.INV_StockActual <= I.INV_StockMinimo      
+                    THEN 1
+                ELSE
+                    2
+            END,
+            U.UBI_INV_Nombre,
+            P.PRD_Descripcion;
+
+        -- Auditoría
+        BEGIN TRY
+            SET @Descripcion = 'Se usó CONSULTAR_INVENTARIO_SP';
+
+            IF @FiltroUbicacion IS NOT NULL
+                SET @Descripcion = @Descripcion + ' con filtro de ubicación [' + @FiltroUbicacion + '].';
+            ELSE
+                SET @Descripcion = @Descripcion + ' sin filtro específico (Todos).';
+
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID    = @Persona_ID,
+                @Accion        = 'SELECT',
+                @TablaAfectada = 'INVENTARIOS_TB',
+                @FilaAfectada  = 0,
+                @Descripcion   = @Descripcion,
+                @Antes         = NULL,
+                @Despues       = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage  NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT            = ERROR_SEVERITY();
+        DECLARE @ErrorState    INT            = ERROR_STATE();
+
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
 GO
 
+
+EXEC CONSULTAR_INVENTARIO_SP
+    @NombreUsuario = 'AskingMansOz',
+    @FiltroUbicacion = 'XSTORE Cartago';
 
 EXEC CONSULTAR_AUDITORIAS_SP
     @NombreUsuario = 'AskingMansOz',
@@ -4145,8 +4243,7 @@ EXEC CONSULTAR_AUDITORIAS_SP
 								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
 								se agrega a inventario y se le pone la cantidad agregada al registro)
 
-	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, no aplica update al descuento)
-    (Registrar_Productos_SP) APLICAR_DESCUENTO_PRODUCTO_SP (Se aplica un desc_ID a un producto o varios) -- Va en Registrar Productos
+	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, uede aplicar update al producto)
 	(Modificar_Producto_SP) (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
 
 	FACTURAR_CLIENTE_SP (crear encabezados, referenciar cliente, agregar entrega si aplica y referenciar el estado y detallar factura, 
