@@ -55,13 +55,12 @@ VALUES (
 INSERT INTO DBO.ROLES_TB (
     ROL_Nombre, ROL_Accesos
 )
-VALUES (
-    'Administrador', 'Pantallas_Administrador'
-);
+VALUES 
+('Administrador', 'Pantallas_Administrador');
 
 EXEC REGISTRAR_SESION_SP
-	@Persona_ID = 2,
 	@NombreUsuario = 'AskingMansOz',
+    @Identificacion = '117980274',
 	@PasswordHash = 'xlr8',
 	@NombreRol = 'Administrador';
 

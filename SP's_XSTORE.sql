@@ -2184,62 +2184,34 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.MODIFICAR_PERSONA_SP
-    @NombreUsuario      VARCHAR(75),            -- Responsable
-    @Identificacion     VARCHAR(50),            -- Identificador para ubicar a la persona
+    @NombreUsuario      VARCHAR(75)   = NULL,     -- Auto-modificación = Null, Admin = NombreUsuario de Administrador
+    @Identificacion     VARCHAR(50),              -- Identificación de la persona a modificar
     @NuevoNombre        VARCHAR(150)  = NULL,
-    @NuevoTelefono      VARCHAR(25)   = NULL,   -- '' = borrar teléfono  -- NULL no se modifica
-    @NuevoCorreo        VARCHAR(150)  = NULL,   -- '' = borrar correo    -- NULL no se modifica
-    @NuevaDireccion     VARCHAR(175)  = NULL,   -- '' = borrar dirección -- NULL no se modifica
-    @NuevoTipoPersona   VARCHAR(50)   = NULL,   -- Solo Administrador puede modificarlo
-    @NuevoEstado        BIT           = NULL    -- Solo Administrador puede modificarlo
+    @NuevoTelefono      VARCHAR(25)   = NULL,     -- '' = borrar, NULL = no modificar
+    @NuevoCorreo        VARCHAR(150)  = NULL,     -- '' = borrar, NULL = no modificar
+    @NuevaDireccion     VARCHAR(175)  = NULL,     -- '' = borrar, NULL = no modificar
+    @NuevoTipoPersona   VARCHAR(50)   = NULL,     -- Solo Admin puede modificar
+    @NuevoEstado        BIT           = NULL      -- Solo Admin puede modificar
 AS
 BEGIN
-
     SET XACT_ABORT ON;
     SET NOCOUNT ON;
 
-    DECLARE @Persona_ID         INT;
-    DECLARE @PER_ID             INT;
-    DECLARE @EsAdministrador    BIT  = 0;
-    DECLARE @Tipo_Per_ID        INT;
+    DECLARE @Persona_ID_Ejecutor  INT;      -- ID de quien ejecuta (para auditoría)
+    DECLARE @PER_ID               INT;      -- ID de la persona a modificar
+    DECLARE @EsAdministrador      BIT = 0;
+    DECLARE @Tipo_Per_ID          INT;
 
     -- Normalización
-    SET @Identificacion     = TRIM(ISNULL(@Identificacion, ''));
-    SET @NuevoNombre        = NULLIF(TRIM(ISNULL(@NuevoNombre, '')), '');
-
-    -- Teléfono, Correo y Dirección: NULL = no tocar, '' = borrar, valor = actualizar
-    -- No se normalizan a NULL aquí para distinguir '' intencional de no enviado
+    SET @Identificacion = TRIM(ISNULL(@Identificacion, ''));
+    SET @NuevoNombre    = NULLIF(TRIM(ISNULL(@NuevoNombre, '')), '');
 
     BEGIN TRY
-
         BEGIN TRANSACTION;
-
-        -- Validación de usuario activo y detección de rol
-        SELECT
-            @Persona_ID = S.SESION_PER_ID,
-            @EsAdministrador = CASE WHEN R.ROL_Nombre = 'Administrador' THEN 1 ELSE 0 END
-        FROM DBO.SESIONES_TB S
-        INNER JOIN DBO.ROLES_TB R
-            ON S.SESION_ROL_ID = R.ROL_ID
-        WHERE S.SESION_NombreUsuario = @NombreUsuario
-            AND S.SESION_Estado = 1;
-
-        IF @Persona_ID IS NULL
+        
+        IF LEN(@Identificacion) = 0
         BEGIN
-            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
-            RETURN;
-        END;
-
-        -- Solo Administrador puede modificar el tipo de persona
-        IF @NuevoTipoPersona IS NOT NULL AND @EsAdministrador = 0
-        BEGIN
-            RAISERROR('Acceso denegado: Solo un Administrador puede modificar el tipo de persona.', 16, 1);
-            RETURN;
-        END;
-
-        IF @NuevoEstado IS NOT NULL AND @EsAdministrador = 0
-        BEGIN
-            RAISERROR('Acceso denegado: Solo un Administrador puede modificar el estado de la cuenta.', 16, 1);
+            RAISERROR('Error: La identificación no puede estar vacía.', 16, 1);
             RETURN;
         END;
 
@@ -2261,11 +2233,56 @@ BEGIN
             RETURN;
         END;
 
-        -- Un persona que no es administrador solo puede modificar su propia cuenta
-        IF @EsAdministrador = 0 AND @Persona_ID != @PER_ID
+        IF @NombreUsuario IS NULL
         BEGIN
-            RAISERROR('Acceso denegado: Solo puede modificar su propia cuenta.', 16, 1);
-            RETURN;
+            -- MODO AUTO-MODIFICACIÓN (Persona modificando sus propios datos)
+            SET @EsAdministrador = 0;
+            
+            -- Para auditoría: usamos el ID de la persona misma
+            SET @Persona_ID_Ejecutor = @PER_ID;
+            
+            -- Validar que no intente modificar campos restringidos (Tipo o Estado)
+            IF @NuevoTipoPersona IS NOT NULL
+            BEGIN
+                RAISERROR('Acceso denegado: Solo un Administrador puede modificar el tipo de persona.', 16, 1);
+                RETURN;
+            END;
+
+            IF @NuevoEstado IS NOT NULL
+            BEGIN
+                RAISERROR('Acceso denegado: Solo un Administrador puede modificar el estado de la cuenta.', 16, 1);
+                RETURN;
+            END;
+        END
+        ELSE
+        BEGIN
+            -- ADMINISTRADOR (Puede modificar cualquier persona, incluido él mismo)
+            SELECT 
+                @Persona_ID_Ejecutor = S.SESION_PER_ID,
+                @EsAdministrador = CASE WHEN R.ROL_Nombre = 'Administrador' THEN 1 ELSE 0 END
+            FROM DBO.SESIONES_TB S
+            INNER JOIN DBO.ROLES_TB R ON S.SESION_ROL_ID = R.ROL_ID
+            WHERE S.SESION_NombreUsuario = @NombreUsuario
+                AND S.SESION_Estado = 1;
+
+            IF @Persona_ID_Ejecutor IS NULL
+            BEGIN
+                RAISERROR('Error: El usuario [%s] no es válido o no tiene sesión activa.', 16, 1, @NombreUsuario);
+                RETURN;
+            END;
+
+            IF @EsAdministrador = 0
+            BEGIN
+                RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos de Administrador.', 16, 1, @NombreUsuario);
+                RETURN;
+            END;
+
+            -- Opcional: Prevenir que un admin se desactive a sí mismo
+            IF @NuevoEstado = 0 AND @Persona_ID_Ejecutor = @PER_ID
+            BEGIN
+                RAISERROR('Advertencia: No puede desactivar su propia cuenta de administrador.', 16, 1);
+                RETURN;
+            END;
         END;
 
         -- Detección de "nada que modificar"
@@ -2290,14 +2307,17 @@ BEGIN
         -- Validar que al borrar teléfono o correo no quede sin ningún contacto
         IF @NuevoTelefono = '' OR @NuevoCorreo = ''
         BEGIN
-            DECLARE @TelefonoFinal VARCHAR(25);
-            DECLARE @CorreoFinal VARCHAR(150);
+            DECLARE @TelefonoActual VARCHAR(25);
+            DECLARE @CorreoActual   VARCHAR(150);
 
-            SELECT
-                @TelefonoFinal = PER_Telefono,
-                @CorreoFinal   = PER_Correo
+            SELECT 
+                @TelefonoActual = PER_Telefono,
+                @CorreoActual   = PER_Correo
             FROM DBO.PERSONAS_TB
             WHERE PER_ID = @PER_ID;
+
+            DECLARE @TelefonoFinal VARCHAR(25) = @TelefonoActual;
+            DECLARE @CorreoFinal   VARCHAR(150) = @CorreoActual;
 
             IF @NuevoTelefono IS NOT NULL SET @TelefonoFinal = NULLIF(@NuevoTelefono, '');
             IF @NuevoCorreo   IS NOT NULL SET @CorreoFinal = NULLIF(@NuevoCorreo, '');
@@ -2309,7 +2329,7 @@ BEGIN
             END;
         END;
 
-        -- Validar correo único si se va a cambiar
+        -- Validar correo único si se va a cambiar (y no es vacío)
         IF @NuevoCorreo IS NOT NULL AND @NuevoCorreo != ''
         BEGIN
             IF EXISTS (
@@ -2324,7 +2344,7 @@ BEGIN
             END;
         END;
 
-        -- Resolver ID del nuevo tipo de persona si se indicó
+        -- Resolver ID del nuevo tipo de persona si se indicó (solo admin llega aquí)
         IF @NuevoTipoPersona IS NOT NULL
         BEGIN
             SET @NuevoTipoPersona = TRIM(@NuevoTipoPersona);
@@ -2347,49 +2367,26 @@ BEGIN
             END;
         END;
 
-        -- Validación para desactivar una persona en uso
-        /*IF @NuevoEstado = 0
-        BEGIN
-            IF EXISTS (
-                SELECT 1
-                FROM DBO.SESIONES_TB
-                WHERE SESION_PER_ID = @PER_ID
-                    AND SESION_Estado = 1
-            )
-            BEGIN
-                RAISERROR('No se puede desactivar la persona porque tiene sesiones activas.', 16, 1);
-                RETURN;
-            END;
-        END;*/
-
-        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID_Ejecutor;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_PERSONA_SP';
 
         UPDATE DBO.PERSONAS_TB
         SET
-            PER_NombreCompleto  = ISNULL(@NuevoNombre,      PER_NombreCompleto),
+            PER_NombreCompleto = ISNULL(@NuevoNombre, PER_NombreCompleto),
             PER_Telefono = CASE 
-                               WHEN @NuevoTelefono IS NULL 
-                                   THEN PER_Telefono   -- No tocar
-                               WHEN @NuevoTelefono = ''    
-                                   THEN NULL           -- Borrar
-                               ELSE 
-                                   @NuevoTelefono      -- Actualizar
+                               WHEN @NuevoTelefono IS NULL THEN PER_Telefono
+                               WHEN @NuevoTelefono = ''    THEN NULL
+                               ELSE @NuevoTelefono
                            END,
             PER_Correo = CASE
-                               WHEN @NuevoCorreo IS NULL   
-                                   THEN PER_Correo     -- No tocar
-                               WHEN @NuevoCorreo = ''      
-                                   THEN NULL           -- Borrar
-                               ELSE 
-                                   @NuevoCorreo        -- Actualizar
+                               WHEN @NuevoCorreo IS NULL   THEN PER_Correo
+                               WHEN @NuevoCorreo = ''      THEN NULL
+                               ELSE @NuevoCorreo
                          END,
             PER_Direccion = CASE
-                               WHEN @NuevaDireccion IS NULL 
-                                   THEN PER_Direccion -- No tocar
-                               WHEN @NuevaDireccion = ''    
-                                   THEN NULL          -- Borrar
-                               ELSE @NuevaDireccion   -- Actualizar
+                               WHEN @NuevaDireccion IS NULL THEN PER_Direccion
+                               WHEN @NuevaDireccion = ''    THEN NULL
+                               ELSE @NuevaDireccion
                          END,
             PER_TIPO_PER_ID = ISNULL(@Tipo_Per_ID, PER_TIPO_PER_ID),
             PER_Estado = ISNULL(@NuevoEstado, PER_Estado)
@@ -2402,7 +2399,6 @@ BEGIN
 
     END TRY
     BEGIN CATCH
-
         IF @@TRANCOUNT > 0 ROLLBACK;
 
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
@@ -2413,8 +2409,7 @@ BEGIN
         DECLARE @ErrorState     INT             = ERROR_STATE();
 
         RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
-
-    END CATCH
+    END CATCH;
 END;
 GO
 

@@ -357,8 +357,12 @@ BEGIN
         CONSTRAINT CK_DESC_DescuentoPct
             CHECK (DESC_DescuentoPct BETWEEN 0.00 AND 100.00),
 
-        CONSTRAINT CK_FECHAS
-            CHECK (DESC_FechaFin > DESC_FechaInicio)
+        CONSTRAINT CK_DESC_FECHAS
+            CHECK (DESC_FechaFin > DESC_FechaInicio),
+
+        -- UNIQUES
+        CONSTRAINT UQ_DESC_NombreComercial
+            UNIQUE (DESC_NombreComercial)
     ); 
 END
 GO
