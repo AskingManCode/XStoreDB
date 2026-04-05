@@ -2725,7 +2725,7 @@ BEGIN
                 @Persona_ID     = @Persona_ID,
                 @Accion         = 'SELECT',
                 @TablaAfectada  = 'SESIONES_TB',
-                @FilaAfectada   = @Sesion_ID,
+                @FilaAfectada   = 0,
                 @Descripcion    = 'Se usó VERIFICAR_SESION_SP.',
                 @Antes          = NULL,
                 @Despues        = NULL
@@ -3471,8 +3471,6 @@ BEGIN
         RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
 
     END CATCH
-
-    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 END;
 GO
 

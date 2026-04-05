@@ -811,20 +811,22 @@ BEGIN
             ' | Teléfono: ' + COALESCE(D.PER_Telefono, 'N/A') + 
             ' | Correo: ' + COALESCE(D.PER_Correo, 'N/A') + 
             ' | Dirección: ' + COALESCE(D.PER_Direccion, 'N/A') + 
-            ' | Tipo Persona: ' + TP.TIPO_PER_Nombre + 
+            ' | Tipo Persona: ' + TP_OLD.TIPO_PER_Nombre + 
             ' | Estado: ' + CASE WHEN D.PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
             '[ Identificacion: ' + I.PER_Identificacion + 
             ' | Nombre Completo: ' + I.PER_NombreCompleto + 
             ' | Teléfono: ' + COALESCE(I.PER_Telefono, 'N/A') + 
             ' | Correo: ' + COALESCE(I.PER_Correo, 'N/A') + 
             ' | Dirección: ' + COALESCE(I.PER_Direccion, 'N/A') + 
-            ' | Tipo Persona: ' + TP.TIPO_PER_Nombre + 
+            ' | Tipo Persona: ' + TP_NEW.TIPO_PER_Nombre + 
             ' | Estado: ' + CASE WHEN I.PER_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
         FROM DELETED D
         INNER JOIN INSERTED I
             ON D.PER_ID = I.PER_ID
-        INNER JOIN TIPOS_PERSONAS_TB TP
-            ON I.PER_TIPO_PER_ID = TP.TIPO_PER_ID;
+        INNER JOIN TIPOS_PERSONAS_TB TP_OLD 
+            ON D.PER_TIPO_PER_ID = TP_OLD.TIPO_PER_ID
+        INNER JOIN TIPOS_PERSONAS_TB TP_NEW 
+            ON I.PER_TIPO_PER_ID = TP_NEW.TIPO_PER_ID
     END TRY
     BEGIN CATCH
         -- Error en Auditoría no debe afectar el Trigger
