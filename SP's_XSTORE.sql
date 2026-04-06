@@ -5237,16 +5237,188 @@ END;
 GO
 
 
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_ENTREGAS_SP
+    @NombreUsuario      VARCHAR(75),
+    @FiltroEstado       VARCHAR(50)  = NULL,  -- NULL = Todos, o nombre exacto del estado
+    @FiltroCliente      VARCHAR(100) = NULL,  -- Búsqueda parcial por nombre o identificación
+    @FechaDesde         DATE         = NULL,
+    @FechaHasta         DATE         = NULL
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    DECLARE @Persona_ID  INT;
+    DECLARE @RolEjecutor VARCHAR(50);
+    DECLARE @Descripcion VARCHAR(250);
+
+    SET @FiltroEstado  = NULLIF(TRIM(ISNULL(@FiltroEstado,  '')), '');
+    SET @FiltroCliente = NULLIF(TRIM(ISNULL(@FiltroCliente, '')), '');
+
+    BEGIN TRY
+
+        -- Validación de usuario activo y obtención de rol
+        SELECT
+            @Persona_ID  = S.SESION_PER_ID,
+            @RolEjecutor = R.ROL_Nombre
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Clientes solo pueden ver sus propias entregas
+        -- Vendedores y Administradores ven todas
+        IF @RolEjecutor NOT IN ('Administrador', 'Vendedor', 'Cliente')
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos para consultar entregas.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Validar coherencia de rango de fechas
+        IF @FechaDesde IS NOT NULL AND @FechaHasta IS NOT NULL
+            AND @FechaHasta < @FechaDesde
+        BEGIN
+            RAISERROR('Error: La fecha hasta no puede ser anterior a la fecha desde.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar que el estado filtrado exista
+        IF @FiltroEstado IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM DBO.ESTADOS_ENTREGAS_TB
+                WHERE EST_ENT_Nombre = @FiltroEstado
+            )
+        BEGIN
+            RAISERROR('Error: El estado de entrega [%s] no existe.', 16, 1, @FiltroEstado);
+            RETURN;
+        END;
+
+        SELECT
+            EF.ENC_FAC_Numero                                       AS [Número Factura],
+            CLI.PER_NombreCompleto                                  AS [Cliente],
+            CLI.PER_Identificacion                                  AS [Identificación],
+            CLI.PER_Telefono                                        AS [Teléfono],
+            CLI.PER_Correo                                          AS [Correo],
+            EE.EST_ENT_Nombre                                       AS [Estado Entrega],
+            CONVERT(VARCHAR(10), ENT.ENC_ENT_CLI_FechaEntrega, 120) AS [Fecha Entrega],
+            CASE
+                WHEN ENT.ENC_ENT_CLI_FechaEntrega < CAST(GETDATE() AS DATE)
+                    AND EE.EST_ENT_Nombre != 'Entregado'
+                    THEN 'Vencida'
+                WHEN ENT.ENC_ENT_CLI_FechaEntrega = CAST(GETDATE() AS DATE)
+                    AND EE.EST_ENT_Nombre != 'Entregado'
+                    THEN 'Hoy'
+                WHEN EE.EST_ENT_Nombre = 'Entregado'
+                    THEN 'Completada'
+                ELSE
+                    CONVERT(VARCHAR(5), DATEDIFF(DAY, CAST(GETDATE() AS DATE), ENT.ENC_ENT_CLI_FechaEntrega))
+                    + ' día(s)'
+            END                                                     AS [Tiempo Restante],
+            ENT.ENC_ENT_CLI_DireccionEntrega                        AS [Dirección Entrega],
+            ISNULL(ENT.ENC_ENT_CLI_Observaciones, 'N/A')            AS [Observaciones],
+            CONVERT(VARCHAR(19), EF.ENC_FAC_FechaHora, 120)         AS [Fecha Factura],
+            EF.ENC_FAC_Total                                        AS [Total Factura]
+        FROM DBO.ENC_ENTREGAS_CLIENTES_TB ENT
+        INNER JOIN DBO.ENC_FACTURAS_TB EF
+            ON ENT.ENC_ENT_CLI_ENC_FAC_ID = EF.ENC_FAC_ID
+        INNER JOIN DBO.PERSONAS_TB CLI
+            ON EF.ENC_FAC_PER_ID = CLI.PER_ID
+        INNER JOIN DBO.ESTADOS_ENTREGAS_TB EE
+            ON ENT.ENC_ENT_CLI_EST_ENT_ID = EE.EST_ENT_ID
+        WHERE
+            -- Cliente solo ve las suyas
+            (@RolEjecutor != 'Cliente' OR CLI.PER_ID = @Persona_ID)
+            -- Filtro por estado
+            AND (@FiltroEstado IS NULL OR EE.EST_ENT_Nombre = @FiltroEstado)
+            -- Filtro parcial por nombre o identificación del cliente
+            AND (
+                @FiltroCliente IS NULL
+                OR CLI.PER_NombreCompleto  LIKE '%' + @FiltroCliente + '%'
+                OR CLI.PER_Identificacion  LIKE '%' + @FiltroCliente + '%'
+            )
+            -- Filtro por rango de fecha de entrega
+            AND (@FechaDesde IS NULL OR ENT.ENC_ENT_CLI_FechaEntrega >= @FechaDesde)
+            AND (@FechaHasta IS NULL OR ENT.ENC_ENT_CLI_FechaEntrega <= @FechaHasta)
+        ORDER BY
+            -- Vencidas y urgentes primero
+            CASE
+                WHEN EE.EST_ENT_Nombre = 'Entregado'                                
+                    THEN 3
+                WHEN ENT.ENC_ENT_CLI_FechaEntrega < CAST(GETDATE() AS DATE)         
+                    THEN 0
+                WHEN ENT.ENC_ENT_CLI_FechaEntrega = CAST(GETDATE() AS DATE)         
+                    THEN 1
+                ELSE                                                                      
+                    2
+            END,
+            ENT.ENC_ENT_CLI_FechaEntrega ASC,
+            CLI.PER_NombreCompleto ASC;
+
+        -- Auditoría
+        BEGIN TRY
+            SET @Descripcion = 'Se usó CONSULTAR_ENTREGAS_SP';
+
+            IF @FiltroEstado IS NOT NULL
+                SET @Descripcion = @Descripcion + ', estado [' + @FiltroEstado + ']';
+
+            IF @FiltroCliente IS NOT NULL
+                SET @Descripcion = @Descripcion + ', cliente [' + LEFT(@FiltroCliente, 20) + ']';
+
+            IF @FechaDesde IS NOT NULL OR @FechaHasta IS NOT NULL
+                SET @Descripcion = @Descripcion + ', rango ['
+                    + ISNULL(CONVERT(VARCHAR(10), @FechaDesde, 120), '*')
+                    + ' a '
+                    + ISNULL(CONVERT(VARCHAR(10), @FechaHasta, 120), '*') + ']';
+
+            IF @FiltroEstado IS NULL AND @FiltroCliente IS NULL
+               AND @FechaDesde IS NULL AND @FechaHasta IS NULL
+                SET @Descripcion = @Descripcion + ' sin filtro específico (Todos).';
+            ELSE
+                SET @Descripcion = LEFT(@Descripcion, 247) + '.';
+
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID    = @Persona_ID,
+                @Accion        = 'SELECT',
+                @TablaAfectada = 'ENC_ENTREGAS_CLIENTES_TB',
+                @FilaAfectada  = 0,
+                @Descripcion   = @Descripcion,
+                @Antes         = NULL,
+                @Despues       = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage  NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT            = ERROR_SEVERITY();
+        DECLARE @ErrorState    INT            = ERROR_STATE();
+
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+END;
+GO
+
+
+
+
+
 EXEC CONSULTAR_AUDITORIAS_SP
     @NombreUsuario = 'AskingMansOz',
     @FechaFiltro = '2026-04-03',
     @TablaFiltro = 'Auditorias_TB';
 
--- CREATE OR ALTER PROCEDURE 
-
-/*
-    -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-	FACTURAR_CLIENTE_SP (crear encabezados, referenciar cliente, agregar entrega si aplica y referenciar el estado y detallar factura, 
-						agregar productos, verificar descuentos, aplicar descuentos si existen, 
-						agregar cantidad compra al tipo de cliente, verificar suma de montos, aplicar impuestos)
-*/
