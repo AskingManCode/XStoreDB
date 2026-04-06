@@ -494,7 +494,7 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_TIPOS_PRODUCTOS_SP
-    @NombreUsuario  VARCHAR(75)    -- Responsable
+    @NombreUsuario  VARCHAR(75) = NULL   -- Responsable
 AS 
 BEGIN
     
@@ -504,18 +504,25 @@ BEGIN
 
     BEGIN TRY
         
-        -- Validaciones
-        SELECT @Persona_ID = S.SESION_PER_ID
-        FROM DBO.SESIONES_TB S
-        INNER JOIN DBO.ROLES_TB R
-            ON S.SESION_ROL_ID = R.ROL_ID
-        WHERE S.SESION_NombreUsuario = @NombreUsuario
-            AND S.SESION_Estado = 1;
-
-        IF @Persona_ID IS NULL
+        if @NombreUsuario IS NULL
         BEGIN
-            RAISERROR('Error: El usuario [%s] no es válido', 16, 1, @NombreUsuario);
-            RETURN;
+            SET @Persona_ID = 1; -- Fallback al Sistema
+        END
+        ELSE
+        BEGIN
+            -- Validaciones
+            SELECT @Persona_ID = S.SESION_PER_ID
+            FROM DBO.SESIONES_TB S
+            INNER JOIN DBO.ROLES_TB R
+                ON S.SESION_ROL_ID = R.ROL_ID
+            WHERE S.SESION_NombreUsuario = @NombreUsuario
+                AND S.SESION_Estado = 1;
+
+            IF @Persona_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El usuario [%s] no es válido', 16, 1, @NombreUsuario);
+                RETURN;
+            END;
         END;
 
         SELECT 
@@ -751,7 +758,7 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_MARCAS_PRODUCTOS_SP
-    @NombreUsuario VARCHAR(75) -- Responsable
+    @NombreUsuario VARCHAR(75) = NULL -- Responsable
 AS
 BEGIN
  
@@ -761,18 +768,25 @@ BEGIN
  
     BEGIN TRY
  
-        -- Validación de usuario activo
-        SELECT @Persona_ID = S.SESION_PER_ID
-        FROM DBO.SESIONES_TB S
-        INNER JOIN DBO.ROLES_TB R
-            ON S.SESION_ROL_ID = R.ROL_ID
-        WHERE S.SESION_NombreUsuario = @NombreUsuario
-            AND S.SESION_Estado = 1;
- 
-        IF @Persona_ID IS NULL
+        IF @NombreUsuario IS NULL
+        BEGIN 
+            SET @Persona_ID = 1; -- Fallback al sistema
+        END
+        ELSE
         BEGIN
-            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
-            RETURN;
+            -- Validación de usuario activo
+            SELECT @Persona_ID = S.SESION_PER_ID
+            FROM DBO.SESIONES_TB S
+            INNER JOIN DBO.ROLES_TB R
+                ON S.SESION_ROL_ID = R.ROL_ID
+            WHERE S.SESION_NombreUsuario = @NombreUsuario
+                AND S.SESION_Estado = 1;
+ 
+            IF @Persona_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+                RETURN;
+            END;
         END;
  
         SELECT
@@ -3345,7 +3359,7 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_DESCUENTOS_SP
-    @NombreUsuario      VARCHAR(75),        -- Responsable
+    @NombreUsuario      VARCHAR(75)  = NULL,        -- Responsable
     @CategoriaFiltro    VARCHAR(75)  = NULL, -- Filtro por nombre de categoría
     @FechaDesde         DATE         = NULL, -- Rango inicio
     @FechaHasta         DATE         = NULL  -- Rango fin
@@ -3353,7 +3367,6 @@ AS
 BEGIN
 
     SET NOCOUNT ON;
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     DECLARE @Persona_ID     INT;
     DECLARE @Descripcion    VARCHAR(250);
@@ -3361,18 +3374,25 @@ BEGIN
 
     BEGIN TRY
 
-        -- Validación de usuario activo
-        SELECT @Persona_ID = S.SESION_PER_ID
-        FROM DBO.SESIONES_TB S
-        INNER JOIN DBO.ROLES_TB R
-            ON S.SESION_ROL_ID = R.ROL_ID
-        WHERE S.SESION_NombreUsuario = @NombreUsuario
-            AND S.SESION_Estado = 1;
-
-        IF @Persona_ID IS NULL
+        IF @NombreUsuario IS NULL
         BEGIN
-            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
-            RETURN;
+            SET @Persona_ID = 1; -- Fallback al sistema
+        END
+        ELSE
+        BEGIN
+            -- Validación de usuario activo
+            SELECT @Persona_ID = S.SESION_PER_ID
+            FROM DBO.SESIONES_TB S
+            INNER JOIN DBO.ROLES_TB R
+                ON S.SESION_ROL_ID = R.ROL_ID
+            WHERE S.SESION_NombreUsuario = @NombreUsuario
+                AND S.SESION_Estado = 1;
+
+            IF @Persona_ID IS NULL
+            BEGIN
+                RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+                RETURN;
+            END;
         END;
 
         -- Validar coherencia de fechas de filtro
@@ -3935,7 +3955,7 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_PRODUCTOS_SP
-    @NombreUsuario      VARCHAR(75),            -- Responsable
+    @NombreUsuario      VARCHAR(75)     = NULL,        -- Responsable
     @FiltroDescripcion  VARCHAR(150)    = NULL, -- Búsqueda parcial en descripción
     @FiltroTipo         VARCHAR(75)     = NULL, -- Nombre exacto del tipo de producto
     @FiltroMarca        VARCHAR(75)     = NULL, -- Nombre exacto de la marca
@@ -3950,20 +3970,27 @@ BEGIN
     DECLARE @FechaHoy   DATE = CAST(GETDATE() AS DATE);
 
     BEGIN TRY
-
-        -- Validación de usuario
-        SELECT @Persona_ID = S.SESION_PER_ID
-        FROM DBO.SESIONES_TB S
-        INNER JOIN DBO.ROLES_TB R
-            ON S.SESION_ROL_ID = R.ROL_ID
-        WHERE S.SESION_NombreUsuario = @NombreUsuario
-            AND S.SESION_Estado = 1;
-
-        IF @Persona_ID IS NULL
+        
+        IF @NombreUsuario IS NULL
         BEGIN
-            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
-            RETURN;
-        END;
+            SET @Persona_ID = 1; -- Fallback al sistema
+        END
+        ELSE
+        BEGIN
+            -- Validación de usuario
+            SELECT @Persona_ID = S.SESION_PER_ID
+            FROM DBO.SESIONES_TB S
+            INNER JOIN DBO.ROLES_TB R
+                ON S.SESION_ROL_ID = R.ROL_ID
+            WHERE S.SESION_NombreUsuario = @NombreUsuario
+                AND S.SESION_Estado = 1;
+
+            IF @Persona_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+                RETURN;
+            END;
+        END
 
         -- Normalización de filtros, todo opcional
         SET @FiltroDescripcion  = NULLIF(TRIM(ISNULL(@FiltroDescripcion, '')), '');
@@ -4096,8 +4123,6 @@ BEGIN
         RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
 
     END CATCH
-
-    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 END;
 GO
 

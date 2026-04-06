@@ -729,8 +729,10 @@ BEGIN
         SET @Persona_ID = 1;
 
     IF @Persona_ID = 0
+    BEGIN
         SELECT @Persona_ID = I.PER_ID 
         FROM INSERTED I
+    END
 
     BEGIN TRY
         INSERT INTO DBO.AUDITORIAS_TB (
