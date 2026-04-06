@@ -4145,14 +4145,14 @@ BEGIN
     SET @NuevoProveedor     = NULLIF(TRIM(ISNULL(@NuevoProveedor, '')), '');
     SET @NombreUbicacion    = NULLIF(TRIM(ISNULL(@NombreUbicacion, '')), '');
 
+    DECLARE @DescuentoInput VARCHAR(100) = @NuevoDescuento;  -- Preservar original
+    SET @NuevoDescuento = NULLIF(TRIM(ISNULL(@NuevoDescuento, '')), '');
+
     -- Descuento: '' = quitar, NULL = no tocar, texto = cambiar
-    IF @NuevoDescuento IS NOT NULL AND TRIM(@NuevoDescuento) = ''
-    BEGIN
+    IF @DescuentoInput IS NOT NULL AND TRIM(@DescuentoInput) = ''
         SET @QuitarDescuento = 1;
-        SET @NuevoDescuento  = NULL;
-    END
     ELSE
-        SET @NuevoDescuento = NULLIF(TRIM(ISNULL(@NuevoDescuento, '')), '');
+        SET @QuitarDescuento = 0;
 
     BEGIN TRY
 
@@ -4547,10 +4547,6 @@ END;
 GO
 
 
-EXEC CONSULTAR_INVENTARIO_SP 
-    @NombreUsuario = 'AskingMansOz',
-    --@FiltroUbicacion = 'XSTORE Cartago',
-    @FiltroProducto = '16';
 
 EXEC CONSULTAR_AUDITORIAS_SP
     @NombreUsuario = 'AskingMansOz',
@@ -4561,14 +4557,6 @@ EXEC CONSULTAR_AUDITORIAS_SP
 
 /*
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-	X CONSULTAR_PRODUCTOS_SP (select con joins) -- Aplicar Filtros
-	X REGISTRAR_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento (Si aplica), se busca en inventario y en ubicación y 
-								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
-								se agrega a inventario y se le pone la cantidad agregada al registro)
-
-	MODIFICAR_PRODUCTO_SP (UPDATE al tipo, marca, proveedor, y datos generales del producto, uede aplicar update al producto)
-	(Modificar_Producto_SP) (Se aplica un null a la referencia del descuento que tenía antes) -- Va en modificar Productos
-
 	FACTURAR_CLIENTE_SP (crear encabezados, referenciar cliente, agregar entrega si aplica y referenciar el estado y detallar factura, 
 						agregar productos, verificar descuentos, aplicar descuentos si existen, 
 						agregar cantidad compra al tipo de cliente, verificar suma de montos, aplicar impuestos)

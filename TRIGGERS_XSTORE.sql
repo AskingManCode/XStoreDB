@@ -1210,6 +1210,87 @@ END;
 GO
 
 
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_PRODUCTO_TR
+ON DBO.PRODUCTOS_TB
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID, 
+            AUD_Accion, 
+            AUD_TablaAfectada, 
+            AUD_FilaAfectada,
+            AUD_Descripcion, 
+            AUD_Antes, 
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'UPDATE',
+            'PRODUCTOS_TB',
+            I.PRD_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y MODIFICAR_PRODUCTO_TR.'
+                ELSE
+                    'Se usó MODIFICAR_PRODUCTO_TR.'
+            END,
+            '[ Descripción: ' + D.PRD_Descripcion +
+            ' | Tipo: ' + TP_OLD.TIPO_PRD_Nombre +
+            ' | Marca: ' + MP_OLD.MARC_PRD_Nombre +
+            ' | Proveedor: ' + P_OLD.PER_NombreCompleto +
+            ' | P.Compra: ' + CONVERT(VARCHAR(15), D.PRD_PrecioCompra) +
+            ' | P.Venta: ' + CONVERT(VARCHAR(15), D.PRD_PrecioVenta) +
+            ' | Descuento: ' + ISNULL(D_OLD.DESC_NombreComercial, 'N/A') +
+            ' | Estado: ' + CASE WHEN D.PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]',
+            '[ Descripción: ' + I.PRD_Descripcion +
+            ' | Tipo: ' + TP_NEW.TIPO_PRD_Nombre +
+            ' | Marca: ' + MP_NEW.MARC_PRD_Nombre +
+            ' | Proveedor: ' + P_NEW.PER_NombreCompleto +
+            ' | P.Compra: ' + CONVERT(VARCHAR(15), I.PRD_PrecioCompra) +
+            ' | P.Venta: ' + CONVERT(VARCHAR(15), I.PRD_PrecioVenta) +
+            ' | Descuento: ' + ISNULL(D_NEW.DESC_NombreComercial, 'N/A') +
+            ' | Estado: ' + CASE WHEN I.PRD_Estado = 1 THEN 'Activo' ELSE 'Inactivo' END + ' ]'
+        FROM DELETED D
+        INNER JOIN INSERTED I
+            ON D.PRD_ID = I.PRD_ID
+        INNER JOIN DBO.TIPOS_PRODUCTOS_TB TP_OLD
+            ON D.PRD_TIPO_PRD_ID = TP_OLD.TIPO_PRD_ID
+        INNER JOIN DBO.TIPOS_PRODUCTOS_TB TP_NEW
+            ON I.PRD_TIPO_PRD_ID = TP_NEW.TIPO_PRD_ID
+        INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP_OLD
+            ON D.PRD_MARC_PRD_ID = MP_OLD.MARC_PRD_ID
+        INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP_NEW
+            ON I.PRD_MARC_PRD_ID = MP_NEW.MARC_PRD_ID
+        INNER JOIN DBO.PROVEEDORES_TB PRV_OLD
+            ON D.PRD_PRV_ID = PRV_OLD.PRV_ID
+        INNER JOIN DBO.PROVEEDORES_TB PRV_NEW
+            ON I.PRD_PRV_ID = PRV_NEW.PRV_ID
+        INNER JOIN DBO.PERSONAS_TB P_OLD
+            ON PRV_OLD.PRV_PER_ID = P_OLD.PER_ID
+        INNER JOIN DBO.PERSONAS_TB P_NEW
+            ON PRV_NEW.PRV_PER_ID = P_NEW.PER_ID
+        LEFT JOIN DBO.DESCUENTOS_TB D_OLD
+            ON D.PRD_DESC_ID = D_OLD.DESC_ID
+        LEFT JOIN DBO.DESCUENTOS_TB D_NEW
+            ON I.PRD_DESC_ID = D_NEW.DESC_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
+
+
 CREATE OR ALTER TRIGGER DBO.REGISTRAR_INVENTARIO_TR
 ON DBO.INVENTARIOS_TB
 AFTER INSERT
