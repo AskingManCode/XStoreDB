@@ -5529,12 +5529,3 @@ BEGIN
 END;
 GO
 
-
-EXEC CONSULTAR_ENTREGAS_SP
-    @NombreUsuario = 'AskingMansOz'
-
-EXEC CONSULTAR_AUDITORIAS_SP
-    @NombreUsuario = 'AskingMansOz',
-    @FechaFiltro = '2026-04-03',
-    @TablaFiltro = 'Auditorias_TB';
-
