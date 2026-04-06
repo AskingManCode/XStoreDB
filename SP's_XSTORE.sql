@@ -5414,8 +5414,124 @@ END;
 GO
 
 
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_ESTADO_ENTREGA_POR_FACTURA_SP
+    @NombreUsuario      VARCHAR(75),    -- Responsable del cambio
+    @NumeroFactura      VARCHAR(75),    -- Número de factura (ENC_FAC_Numero)
+    @EnCamino           BIT = 0,        -- Botón "En camino"
+    @Entregado          BIT = 0         -- Botón "Entregado"
+AS
+BEGIN
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID     INT;
+    DECLARE @Factura_ID     INT;
+    DECLARE @Entrega_ID     INT;
+    DECLARE @NuevoEstadoID  INT;
+    DECLARE @NombreEstado   VARCHAR(50);
+    DECLARE @Antes          VARCHAR(1000);
+    DECLARE @Despues        VARCHAR(1000);
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        -- Validar usuario responsable (Admin o Vendedor)
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+          AND S.SESION_Estado = 1
+          AND R.ROL_Nombre IN ('Administrador', 'Vendedor');
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: Usuario [%s] no tiene permisos o no está activo.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Localizar Factura y su Entrega correspondiente
+        SELECT 
+            @Factura_ID = F.ENC_FAC_ID,
+            @Entrega_ID = E.ENC_ENT_CLI_ID
+        FROM DBO.ENC_FACTURAS_TB F
+        LEFT JOIN DBO.ENC_ENTREGAS_CLIENTES_TB E ON F.ENC_FAC_ID = E.ENC_ENT_CLI_ENC_FAC_ID
+        WHERE F.ENC_FAC_Numero = TRIM(@NumeroFactura);
+
+        IF @Factura_ID IS NULL
+        BEGIN
+            RAISERROR('Error: No se encontró la factura [%s].', 16, 1, @NumeroFactura);
+            RETURN;
+        END;
+
+        IF @Entrega_ID IS NULL
+        BEGIN
+            RAISERROR('Error: La factura [%s] no tiene una entrega registrada.', 16, 1, @NumeroFactura);
+            RETURN;
+        END;
+
+        -- Definir el nuevo estado
+        IF @Entregado = 1 SET @NombreEstado = 'Entregado';
+        ELSE IF @EnCamino = 1 SET @NombreEstado = 'En camino';
+        ELSE
+        BEGIN
+            RAISERROR('Error: Instrucción de estado no válida.', 16, 1);
+            RETURN;
+        END;
+
+        -- Obtener el ID del estado desde ESTADOS_ENTREGAS_TB
+        SELECT @NuevoEstadoID = EST_ENT_ID 
+        FROM DBO.ESTADOS_ENTREGAS_TB 
+        WHERE EST_ENT_Nombre = @NombreEstado AND EST_ENT_Estado = 1;
+
+        IF @NuevoEstadoID IS NULL
+        BEGIN
+            RAISERROR('Error: El estado [%s] no existe en el catálogo.', 16, 1, @NombreEstado);
+            RETURN;
+        END;
+
+        -- Capturar estado actual para auditoría
+        SELECT @Antes = '[EstadoID: ' + CAST(ENC_ENT_CLI_EST_ENT_ID AS VARCHAR) + ' | Factura: ' + @NumeroFactura + ']'
+        FROM DBO.ENC_ENTREGAS_CLIENTES_TB WHERE ENC_ENT_CLI_ID = @Entrega_ID;
+
+        -- Actualizar la entrega
+        UPDATE DBO.ENC_ENTREGAS_CLIENTES_TB
+        SET 
+            ENC_ENT_CLI_EST_ENT_ID = @NuevoEstadoID,
+            -- Actualiza la fecha solo si se marca como entregado
+            ENC_ENT_CLI_FechaEntrega = CASE WHEN @Entregado = 1 THEN CAST(SYSDATETIME() AS DATE) ELSE ENC_ENT_CLI_FechaEntrega END
+        WHERE ENC_ENT_CLI_ID = @Entrega_ID;
+
+        -- Auditoría
+        SET @Despues = '[NuevoEstado: ' + @NombreEstado + ' | FechaMod: ' + CONVERT(VARCHAR, SYSDATETIME(), 120) + ']';
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', 'MODIFICAR_ESTADO_ENTREGA_POR_FACTURA_SP';
+
+        INSERT INTO DBO.AUDITORIAS_TB (AUD_PER_ID, AUD_Accion, AUD_TablaAfectada, AUD_FilaAfectada, AUD_Descripcion, AUD_Antes, AUD_Despues)
+        VALUES (@Persona_ID, 'UPDATE', 'ENC_ENTREGAS_CLIENTES_TB', @Entrega_ID, 
+                'Cambio estado factura ' + @NumeroFactura + ' a ' + @NombreEstado, @Antes, @Despues);
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', NULL;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN', NULL;
+
+        DECLARE @ErrMsj NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR (@ErrMsj, 16, 1);
+    END CATCH
+END;
+GO
 
 
+EXEC CONSULTAR_ENTREGAS_SP
+    @NombreUsuario = 'AskingMansOz'
 
 EXEC CONSULTAR_AUDITORIAS_SP
     @NombreUsuario = 'AskingMansOz',
