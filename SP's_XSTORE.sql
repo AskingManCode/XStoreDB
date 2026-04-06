@@ -3367,8 +3367,7 @@ BEGIN
         INNER JOIN DBO.ROLES_TB R
             ON S.SESION_ROL_ID = R.ROL_ID
         WHERE S.SESION_NombreUsuario = @NombreUsuario
-            AND S.SESION_Estado = 1
-            AND R.ROL_Nombre = 'Administrador';
+            AND S.SESION_Estado = 1;
 
         IF @Persona_ID IS NULL
         BEGIN
@@ -4103,9 +4102,331 @@ END;
 GO
 
 
+CREATE OR ALTER PROCEDURE DBO.MODIFICAR_PRODUCTO_SP
+    @NombreUsuario          VARCHAR(75),
+    @Descripcion            VARCHAR(150),           -- Identificador del producto a modificar
+    @NuevoRutaImagen        VARCHAR(275) = NULL,
+    @NuevaDescripcion       VARCHAR(150) = NULL,
+    @NuevoTipoProducto      VARCHAR(75)  = NULL,    -- Nombre del tipo de producto
+    @NuevaMarca             VARCHAR(75)  = NULL,    -- Nombre de la marca
+    @NuevoProveedor         VARCHAR(150) = NULL,    -- Nombre completo del proveedor
+    @NuevoDescuento         VARCHAR(100) = NULL,    -- Nombre comercial del descuento, '' = quitar descuento
+    @NuevoPrecioCompra      DECIMAL(10,2)= NULL,
+    @NuevoPrecioVenta       DECIMAL(10,2)= NULL,
+    @NuevoEstado            BIT          = NULL,
+    -- Inventario
+    @NombreUbicacion        VARCHAR(75)  = NULL,    -- Ubicación a modificar 
+    @NuevoStockMinimo       INT          = NULL,    -- NULL = no modificar
+    @AjusteStock            INT          = NULL     -- Positivo = suma, Negativo = resta, NULL = no tocar
+AS
+BEGIN
+
+    SET XACT_ABORT ON;
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID     INT;
+    DECLARE @PRD_ID         INT;
+    DECLARE @TIPO_PRD_ID    INT;
+    DECLARE @MARC_PRD_ID    INT;
+    DECLARE @PRV_ID         INT;
+    DECLARE @DESC_ID        INT;
+    DECLARE @UBI_INV_ID     INT;
+    DECLARE @INV_ID         INT;
+    DECLARE @StockActual    INT;
+    DECLARE @FechaHoy       DATE = CAST(GETDATE() AS DATE);
+    DECLARE @QuitarDescuento BIT = 0;
+
+    -- Normalización
+    SET @Descripcion        = TRIM(ISNULL(@Descripcion, ''));
+    SET @NuevoRutaImagen    = NULLIF(TRIM(ISNULL(@NuevoRutaImagen, '')), '');
+    SET @NuevaDescripcion   = NULLIF(TRIM(ISNULL(@NuevaDescripcion, '')), '');
+    SET @NuevoTipoProducto  = NULLIF(TRIM(ISNULL(@NuevoTipoProducto, '')), '');
+    SET @NuevaMarca         = NULLIF(TRIM(ISNULL(@NuevaMarca, '')), '');
+    SET @NuevoProveedor     = NULLIF(TRIM(ISNULL(@NuevoProveedor, '')), '');
+    SET @NombreUbicacion    = NULLIF(TRIM(ISNULL(@NombreUbicacion, '')), '');
+
+    -- Descuento: '' = quitar, NULL = no tocar, texto = cambiar
+    IF @NuevoDescuento IS NOT NULL AND TRIM(@NuevoDescuento) = ''
+    BEGIN
+        SET @QuitarDescuento = 1;
+        SET @NuevoDescuento  = NULL;
+    END
+    ELSE
+        SET @NuevoDescuento = NULLIF(TRIM(ISNULL(@NuevoDescuento, '')), '');
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        -- Validación de permisos
+        SELECT @Persona_ID = S.SESION_PER_ID
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1
+            AND R.ROL_Nombre = 'Administrador';
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Obtener el producto a modificar
+        IF LEN(@Descripcion) = 0
+        BEGIN
+            RAISERROR('Error: La descripción del producto no puede estar vacía.', 16, 1);
+            RETURN;
+        END;
+
+        SELECT @PRD_ID = PRD_ID
+        FROM DBO.PRODUCTOS_TB
+        WHERE PRD_Descripcion = @Descripcion;
+
+        IF @PRD_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El producto [%s] no existe.', 16, 1, @Descripcion);
+            RETURN;
+        END;
+
+        -- Verificar que se especificó al menos un cambio
+        IF @NuevoRutaImagen IS NULL
+            AND @NuevaDescripcion IS NULL
+            AND @NuevoTipoProducto IS NULL
+            AND @NuevaMarca IS NULL
+            AND @NuevoProveedor IS NULL
+            AND @NuevoDescuento IS NULL
+            AND @QuitarDescuento = 0
+            AND @NuevoPrecioCompra IS NULL
+            AND @NuevoPrecioVenta IS NULL
+            AND @NuevoEstado IS NULL
+            AND @NuevoStockMinimo IS NULL
+            AND @AjusteStock IS NULL
+        BEGIN
+            RAISERROR('No se especificaron cambios para el producto [%s].', 16, 1, @Descripcion);
+            RETURN;
+        END;
+
+        -- Validar que cambios de inventario tengan ubicación
+        IF (@NuevoStockMinimo IS NOT NULL OR @AjusteStock IS NOT NULL)
+            AND @NombreUbicacion IS NULL
+        BEGIN
+            RAISERROR('Error: Debe especificar la ubicación para modificar el inventario.', 16, 1);
+            RETURN;
+        END;
+
+        -- Foreign Keys
+        -- Tipo de producto
+        IF @NuevoTipoProducto IS NOT NULL
+        BEGIN
+            SELECT @TIPO_PRD_ID = TIPO_PRD_ID
+            FROM DBO.TIPOS_PRODUCTOS_TB
+            WHERE TIPO_PRD_Nombre = @NuevoTipoProducto
+                AND TIPO_PRD_Estado = 1;
+
+            IF @TIPO_PRD_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El tipo de producto [%s] no existe o está inactivo.', 16, 1, @NuevoTipoProducto);
+                RETURN;
+            END;
+        END;
+
+        -- Marca
+        IF @NuevaMarca IS NOT NULL
+        BEGIN
+            SELECT @MARC_PRD_ID = MARC_PRD_ID
+            FROM DBO.MARCAS_PRODUCTOS_TB
+            WHERE MARC_PRD_Nombre = @NuevaMarca
+                AND MARC_PRD_Estado = 1;
+
+            IF @MARC_PRD_ID IS NULL
+            BEGIN
+                RAISERROR('Error: La marca [%s] no existe o está inactiva.', 16, 1, @NuevaMarca);
+                RETURN;
+            END;
+        END;
+
+        -- Proveedor
+        IF @NuevoProveedor IS NOT NULL
+        BEGIN
+            SELECT @PRV_ID = PRV.PRV_ID
+            FROM DBO.PROVEEDORES_TB PRV
+            INNER JOIN DBO.PERSONAS_TB P
+                ON PRV.PRV_PER_ID = P.PER_ID
+            WHERE P.PER_NombreCompleto = @NuevoProveedor
+                AND PRV.PRV_Estado = 1
+                AND P.PER_Estado   = 1;
+
+            IF @PRV_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El proveedor [%s] no existe o está inactivo.', 16, 1, @NuevoProveedor);
+                RETURN;
+            END;
+        END;
+
+        -- Descuento nuevo
+        IF @NuevoDescuento IS NOT NULL
+        BEGIN
+            SELECT @DESC_ID = DESC_ID
+            FROM DBO.DESCUENTOS_TB
+            WHERE DESC_NombreComercial = @NuevoDescuento
+                AND DESC_Estado = 1
+                AND @FechaHoy <= DESC_FechaFin;
+
+            IF @DESC_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El descuento [%s] no existe, está inactivo o no está vigente.', 16, 1, @NuevoDescuento);
+                RETURN;
+            END;
+        END;
+
+        -- Validación de precios
+        IF @NuevoPrecioCompra IS NOT NULL AND @NuevoPrecioCompra < 0
+        BEGIN
+            RAISERROR('Error: El precio de compra no puede ser negativo.', 16, 1);
+            RETURN;
+        END;
+
+        IF @NuevoPrecioVenta IS NOT NULL AND @NuevoPrecioVenta <= 0
+        BEGIN
+            RAISERROR('Error: El precio de venta debe ser mayor a 0.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar precios considerando valores actuales
+        IF @NuevoPrecioCompra IS NOT NULL OR @NuevoPrecioVenta IS NOT NULL
+        BEGIN
+            DECLARE @PrecioCompraFinal DECIMAL(10,2);
+            DECLARE @PrecioVentaFinal  DECIMAL(10,2);
+
+            SELECT
+                @PrecioCompraFinal = ISNULL(@NuevoPrecioCompra, PRD_PrecioCompra),
+                @PrecioVentaFinal  = ISNULL(@NuevoPrecioVenta,  PRD_PrecioVenta)
+            FROM DBO.PRODUCTOS_TB
+            WHERE PRD_ID = @PRD_ID;
+
+            IF @PrecioVentaFinal < @PrecioCompraFinal
+            BEGIN
+                RAISERROR('Error: El precio de venta no puede ser menor al precio de compra.', 16, 1);
+                RETURN;
+            END;
+        END;
+        
+        -- Validaciones de inventario
+        IF @NombreUbicacion IS NOT NULL
+        BEGIN
+            SELECT  
+                @UBI_INV_ID  = U.UBI_INV_ID,
+                @INV_ID      = I.INV_ID,
+                @StockActual = I.INV_StockActual
+            FROM DBO.UBI_INVENTARIOS_TB U
+            LEFT JOIN DBO.INVENTARIOS_TB I
+                ON U.UBI_INV_ID    = I.INV_UBI_INV_ID
+                AND I.INV_PRD_ID   = @PRD_ID
+            WHERE U.UBI_INV_Nombre = @NombreUbicacion
+                AND U.UBI_INV_Estado = 1;
+
+            IF @UBI_INV_ID IS NULL
+            BEGIN
+                RAISERROR('Error: La ubicación [%s] no existe o está inactiva.', 16, 1, @NombreUbicacion);
+                RETURN;
+            END;
+
+            IF @INV_ID IS NULL
+            BEGIN
+                RAISERROR('Error: El producto [%s] no está registrado en la ubicación [%s].', 16, 1, @Descripcion, @NombreUbicacion);
+                RETURN;
+            END;
+        END;
+
+        IF @NuevoStockMinimo IS NOT NULL AND @NuevoStockMinimo < 0
+        BEGIN
+            RAISERROR('Error: El stock mínimo no puede ser negativo.', 16, 1);
+            RETURN;
+        END;
+
+        IF @AjusteStock IS NOT NULL AND @AjusteStock = 0
+        BEGIN
+            RAISERROR('Error: El ajuste de stock no puede ser 0.', 16, 1);
+            RETURN;
+        END;
+
+        -- Validar que la resta no deje stock negativo
+        IF @AjusteStock IS NOT NULL AND @AjusteStock < 0
+        BEGIN
+            IF (@StockActual + @AjusteStock) < 0
+            BEGIN
+                RAISERROR('Error: No tenemos esa cantidad de stock en la ubicación ingresada. Stock actual: %d, Ajuste: %d.', 16, 1, @StockActual, @AjusteStock);
+                RETURN;
+            END;
+        END;
+        
+        -- Update
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'MODIFICAR_PRODUCTO_SP';
+
+        -- Update producto
+        UPDATE DBO.PRODUCTOS_TB
+        SET
+            PRD_RutaImagen  = ISNULL(@NuevoRutaImagen,  PRD_RutaImagen),
+            PRD_Descripcion = ISNULL(@NuevaDescripcion, PRD_Descripcion),
+            PRD_TIPO_PRD_ID = ISNULL(@TIPO_PRD_ID,      PRD_TIPO_PRD_ID),
+            PRD_MARC_PRD_ID = ISNULL(@MARC_PRD_ID,      PRD_MARC_PRD_ID),
+            PRD_PRV_ID      = ISNULL(@PRV_ID,           PRD_PRV_ID),
+            PRD_DESC_ID     = CASE
+                                  WHEN @QuitarDescuento = 1 THEN NULL
+                                  WHEN @DESC_ID IS NOT NULL THEN @DESC_ID
+                                  ELSE PRD_DESC_ID
+                              END,
+            PRD_PrecioCompra = ISNULL(@NuevoPrecioCompra, PRD_PrecioCompra),
+            PRD_PrecioVenta  = ISNULL(@NuevoPrecioVenta,  PRD_PrecioVenta),
+            PRD_Estado       = ISNULL(@NuevoEstado,       PRD_Estado)
+        WHERE PRD_ID = @PRD_ID;
+
+        -- Update inventario (solo si se indicó ubicación y hay algo que cambiar)
+        IF @INV_ID IS NOT NULL AND (@NuevoStockMinimo IS NOT NULL OR @AjusteStock IS NOT NULL)
+        BEGIN
+            UPDATE DBO.INVENTARIOS_TB
+            SET
+                INV_StockMinimo = ISNULL(@NuevoStockMinimo, INV_StockMinimo),
+                INV_StockActual = CASE
+                                      WHEN @AjusteStock IS NOT NULL 
+                                        THEN INV_StockActual + @AjusteStock
+                                      ELSE 
+                                        INV_StockActual
+                                  END
+            WHERE INV_ID = @INV_ID;
+        END;
+
+        COMMIT;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+    END TRY
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0 ROLLBACK;
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        DECLARE @ErrorMessage  NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT            = ERROR_SEVERITY();
+        DECLARE @ErrorState    INT            = ERROR_STATE();
+
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+END;
+GO
+
+
 CREATE OR ALTER PROCEDURE DBO.CONSULTAR_INVENTARIO_SP
     @NombreUsuario      VARCHAR(75),
-    @FiltroUbicacion    VARCHAR(75) = NULL  -- NULL = todas las ubicaciones
+    @FiltroUbicacion    VARCHAR(75)  = NULL, -- NULL = todas las ubicaciones
+    @FiltroProducto     VARCHAR(150) = NULL  -- NULL = todos los productos (LIKE)
 AS
 BEGIN
 
@@ -4115,6 +4436,7 @@ BEGIN
     DECLARE @Descripcion VARCHAR(250);
 
     SET @FiltroUbicacion = NULLIF(TRIM(ISNULL(@FiltroUbicacion, '')), '');
+    SET @FiltroProducto  = NULLIF(TRIM(ISNULL(@FiltroProducto,  '')), '');
 
     BEGIN TRY
 
@@ -4154,7 +4476,7 @@ BEGIN
                     THEN 'Sin stock'
                 WHEN I.INV_StockActual <= I.INV_StockMinimo 
                     THEN 'Stock bajo'
-                ELSE 
+                ELSE
                     'OK'
             END AS [Alerta],
             CASE
@@ -4170,14 +4492,14 @@ BEGIN
             ON I.INV_PRD_ID = P.PRD_ID
         WHERE
             (@FiltroUbicacion IS NULL OR U.UBI_INV_Nombre = @FiltroUbicacion)
-        ORDER BY
-            -- Alertas críticas primero, luego por ubicación y producto
+            AND (@FiltroProducto  IS NULL OR P.PRD_Descripcion LIKE '%' + @FiltroProducto + '%')
+        ORDER BY -- Alertas críticas primero, luego por ubicación y producto
             CASE
                 WHEN I.INV_StockActual = 0 
                     THEN 0
-                WHEN I.INV_StockActual <= I.INV_StockMinimo      
+                WHEN I.INV_StockActual <= I.INV_StockMinimo 
                     THEN 1
-                ELSE
+                ELSE 
                     2
             END,
             U.UBI_INV_Nombre,
@@ -4188,9 +4510,15 @@ BEGIN
             SET @Descripcion = 'Se usó CONSULTAR_INVENTARIO_SP';
 
             IF @FiltroUbicacion IS NOT NULL
-                SET @Descripcion = @Descripcion + ' con filtro de ubicación [' + @FiltroUbicacion + '].';
-            ELSE
+                SET @Descripcion = @Descripcion + ', con filtro de ubicación: [' + @FiltroUbicacion + ']';
+
+            IF @FiltroProducto IS NOT NULL
+                SET @Descripcion = @Descripcion + ', con filtro de producto: [' + LEFT(@FiltroProducto, 30) + ']';
+
+            IF @FiltroUbicacion IS NULL AND @FiltroProducto IS NULL
                 SET @Descripcion = @Descripcion + ' sin filtro específico (Todos).';
+            ELSE
+                SET @Descripcion = LEFT(@Descripcion, 247) + '.';
 
             EXEC DBO.REGISTRAR_AUDITORIA_SP
                 @Persona_ID    = @Persona_ID,
@@ -4219,9 +4547,10 @@ END;
 GO
 
 
-EXEC CONSULTAR_INVENTARIO_SP
+EXEC CONSULTAR_INVENTARIO_SP 
     @NombreUsuario = 'AskingMansOz',
-    @FiltroUbicacion = 'XSTORE Cartago';
+    --@FiltroUbicacion = 'XSTORE Cartago',
+    @FiltroProducto = '16';
 
 EXEC CONSULTAR_AUDITORIAS_SP
     @NombreUsuario = 'AskingMansOz',
@@ -4232,12 +4561,6 @@ EXEC CONSULTAR_AUDITORIAS_SP
 
 /*
     -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-	CONSULTAR_INVENTARIOS_UBICACION_SP (Select y join por ubicaciones)
-	CONSULTAR_INVENTARIOS_TIPOS_PRODUCTOS_SP (Select y join por productos)
-	CONSULTAR_INVENTARIOS_MARCAS_SP (Select y join por marca)
-	CONSULTAR_INVENTARIOS_PROVEEDORES_SP (Select y join por proveedores)
-	MODIFICAR_STOCK_MINIMO_SP (Update StockMinimo de un producto)
-
 	X CONSULTAR_PRODUCTOS_SP (select con joins) -- Aplicar Filtros
 	X REGISTRAR_PRODUCTO_SP (Incluye Tipo, Marca, Proveedor y descuento (Si aplica), se busca en inventario y en ubicación y 
 								se aumenta la cantidad del producto para el inventario de esa ubicación en específico, si no existe 
