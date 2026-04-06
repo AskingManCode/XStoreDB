@@ -22,11 +22,11 @@ INSERT INTO DBO.TIPOS_PERSONAS_TB (
 ) 
 VALUES 
 ('SISTEMA', 0.00, 0.00), 
-('Vendedor', 15, 0.00),
-('Administrador', 20.00, 0.00),  
-('Cliente Normal', 0.00, 0.00), -- ??,
-('Cliente Frecuente', 10.00, 0.00), -- ??
-('Cliente Premium', 25.00, 0.00) -- ??
+('Vendedor', 10, 0.00),
+('Administrador', 15.00, 0.00),  
+('Cliente Normal', 0.00, 1000000.00),
+('Cliente Frecuente', 5.00, 3000000.00),
+('Cliente Premium', 15.00, 5000000.00)
 
 INSERT INTO DBO.PERSONAS_TB (
     PER_Identificacion,

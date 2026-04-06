@@ -1405,3 +1405,359 @@ END;
 GO
 
 
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_FACTURA_TR
+ON DBO.ENC_FACTURAS_TB
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID,
+            AUD_Accion,
+            AUD_TablaAfectada,
+            AUD_FilaAfectada,
+            AUD_Descripcion,
+            AUD_Antes,
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'INSERT',
+            'ENC_FACTURAS_TB',
+            I.ENC_FAC_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y REGISTRAR_FACTURA_TR.'
+                ELSE
+                    'Se usó REGISTRAR_FACTURA_TR.'
+            END,
+            NULL,
+            '[ Número: ' + I.ENC_FAC_Numero + 
+            ' | Cliente: ' + P.PER_NombreCompleto +
+            ' | Identificación: ' + P.PER_Identificacion +
+            ' | Subtotal: ' + CONVERT(VARCHAR(15), I.ENC_FAC_Subtotal) +
+            ' | Descuento: ' + CONVERT(VARCHAR(15), I.ENC_FAC_DescuentoTotal) +
+            ' | Impuesto: ' + CONVERT(VARCHAR(15), I.ENC_FAC_ImpuestoTotal) +
+            ' | Envío: ' + CONVERT(VARCHAR(15), I.ENC_FAC_CostoEnvio) +
+            ' | Total: ' + CONVERT(VARCHAR(15), I.ENC_FAC_Total)
+        FROM INSERTED I
+        INNER JOIN DBO.PERSONAS_TB P
+            ON I.ENC_FAC_PER_ID = P.PER_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_FACTURA_TR
+ON DBO.ENC_FACTURAS_TB
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID,
+            AUD_Accion,
+            AUD_TablaAfectada,
+            AUD_FilaAfectada,
+            AUD_Descripcion,
+            AUD_Antes,
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'UPDATE',
+            'ENC_FACTURAS_TB',
+            I.ENC_FAC_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y MODIFICAR_FACTURA_TR.'
+                ELSE
+                    'Se usó MODIFICAR_FACTURA_TR.'
+            END,
+            '[ Número: ' + D.ENC_FAC_Numero + 
+            ' | Cliente: ' + P_OLD.PER_NombreCompleto +
+            ' | Subtotal: ' + CONVERT(VARCHAR(15), D.ENC_FAC_Subtotal) +
+            ' | Descuento: ' + CONVERT(VARCHAR(15), D.ENC_FAC_DescuentoTotal) +
+            ' | Impuesto: ' + CONVERT(VARCHAR(15), D.ENC_FAC_ImpuestoTotal) +
+            ' | Envío: ' + CONVERT(VARCHAR(15), D.ENC_FAC_CostoEnvio) +
+            ' | Total: ' + CONVERT(VARCHAR(15), D.ENC_FAC_Total),
+            '[ Número: ' + I.ENC_FAC_Numero + 
+            ' | Cliente: ' + P_NEW.PER_NombreCompleto +
+            ' | Subtotal: ' + CONVERT(VARCHAR(15), I.ENC_FAC_Subtotal) +
+            ' | Descuento: ' + CONVERT(VARCHAR(15), I.ENC_FAC_DescuentoTotal) +
+            ' | Impuesto: ' + CONVERT(VARCHAR(15), I.ENC_FAC_ImpuestoTotal) +
+            ' | Envío: ' + CONVERT(VARCHAR(15), I.ENC_FAC_CostoEnvio) +
+            ' | Total: ' + CONVERT(VARCHAR(15), I.ENC_FAC_Total)
+        FROM DELETED D
+        INNER JOIN INSERTED I
+            ON D.ENC_FAC_ID = I.ENC_FAC_ID
+        INNER JOIN DBO.PERSONAS_TB P_OLD
+            ON D.ENC_FAC_PER_ID = P_OLD.PER_ID
+        INNER JOIN DBO.PERSONAS_TB P_NEW
+            ON I.ENC_FAC_PER_ID = P_NEW.PER_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_DETALLE_FACTURA_TR
+ON DBO.DET_FACTURAS_TB
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID,
+            AUD_Accion,
+            AUD_TablaAfectada,
+            AUD_FilaAfectada,
+            AUD_Descripcion,
+            AUD_Antes,
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'INSERT',
+            'DET_FACTURAS_TB',
+            I.DET_FAC_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y REGISTRAR_DETALLE_FACTURA_TR.'
+                ELSE
+                    'Se usó REGISTRAR_DETALLE_FACTURA_TR.'
+            END,
+            NULL,
+            '[ Factura: ' + EF.ENC_FAC_Numero +
+            ' | Producto: ' + PRD.PRD_Descripcion +
+            ' | Cantidad: ' + CONVERT(VARCHAR(10), I.DET_FAC_Cantidad) +
+            ' | P.Unitario: ' + CONVERT(VARCHAR(15), I.DET_FAC_PrecioUnitario) +
+            ' | Descuento: ' + CONVERT(VARCHAR(15), I.DET_FAC_DescuentoMonto) +
+            ' | Subtotal: ' + CONVERT(VARCHAR(15), I.DET_FAC_SubtotalLinea) +
+            ' | Total: ' + CONVERT(VARCHAR(15), I.DET_FAC_TotalLinea) + ' ]'
+        FROM INSERTED I
+        INNER JOIN DBO.ENC_FACTURAS_TB EF
+            ON I.DET_FAC_ENC_FAC_ID = EF.ENC_FAC_ID
+        INNER JOIN DBO.PRODUCTOS_TB PRD
+            ON I.DET_FAC_PRD_ID = PRD.PRD_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_DETALLE_FACTURA_TR
+ON DBO.DET_FACTURAS_TB
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID,
+            AUD_Accion,
+            AUD_TablaAfectada,
+            AUD_FilaAfectada,
+            AUD_Descripcion,
+            AUD_Antes,
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'UPDATE',
+            'DET_FACTURAS_TB',
+            I.DET_FAC_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y MODIFICAR_DETALLE_FACTURA_TR.'
+                ELSE
+                    'Se usó MODIFICAR_DETALLE_FACTURA_TR.'
+            END,
+            '[ Factura: ' + EF_OLD.ENC_FAC_Numero +
+            ' | Producto: ' + PRD_OLD.PRD_Descripcion +
+            ' | Cantidad: ' + CONVERT(VARCHAR(10), D.DET_FAC_Cantidad) +
+            ' | P.Unitario: ' + CONVERT(VARCHAR(15), D.DET_FAC_PrecioUnitario) +
+            ' | Descuento: ' + CONVERT(VARCHAR(15), D.DET_FAC_DescuentoMonto) +
+            ' | Subtotal: ' + CONVERT(VARCHAR(15), D.DET_FAC_SubtotalLinea) +
+            ' | Total: ' + CONVERT(VARCHAR(15), D.DET_FAC_TotalLinea) + ' ]',
+            '[ Factura: ' + EF_NEW.ENC_FAC_Numero +
+            ' | Producto: ' + PRD_NEW.PRD_Descripcion +
+            ' | Cantidad: ' + CONVERT(VARCHAR(10), I.DET_FAC_Cantidad) +
+            ' | P.Unitario: ' + CONVERT(VARCHAR(15), I.DET_FAC_PrecioUnitario) +
+            ' | Descuento: ' + CONVERT(VARCHAR(15), I.DET_FAC_DescuentoMonto) +
+            ' | Subtotal: ' + CONVERT(VARCHAR(15), I.DET_FAC_SubtotalLinea) +
+            ' | Total: ' + CONVERT(VARCHAR(15), I.DET_FAC_TotalLinea) + ' ]'
+        FROM DELETED D
+        INNER JOIN INSERTED I
+            ON D.DET_FAC_ID = I.DET_FAC_ID
+        INNER JOIN DBO.ENC_FACTURAS_TB EF_OLD
+            ON D.DET_FAC_ENC_FAC_ID = EF_OLD.ENC_FAC_ID
+        INNER JOIN DBO.ENC_FACTURAS_TB EF_NEW
+            ON I.DET_FAC_ENC_FAC_ID = EF_NEW.ENC_FAC_ID
+        INNER JOIN DBO.PRODUCTOS_TB PRD_OLD
+            ON D.DET_FAC_PRD_ID = PRD_OLD.PRD_ID
+        INNER JOIN DBO.PRODUCTOS_TB PRD_NEW
+            ON I.DET_FAC_PRD_ID = PRD_NEW.PRD_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
+
+
+CREATE OR ALTER TRIGGER DBO.REGISTRAR_ENTREGA_TR
+ON DBO.ENC_ENTREGAS_CLIENTES_TB
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID,
+            AUD_Accion,
+            AUD_TablaAfectada,
+            AUD_FilaAfectada,
+            AUD_Descripcion,
+            AUD_Antes,
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'INSERT',
+            'ENC_ENTREGAS_CLIENTES_TB',
+            I.ENC_ENT_CLI_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y REGISTRAR_ENTREGA_TR.'
+                ELSE
+                    'Se usó REGISTRAR_ENTREGA_TR.'
+            END,
+            NULL,
+            '[ Factura: ' + EF.ENC_FAC_Numero +
+            ' | Cliente: ' + P.PER_NombreCompleto +
+            ' | Fecha Entrega: ' + CONVERT(VARCHAR(10), I.ENC_ENT_CLI_FechaEntrega, 120) +
+            ' | Dirección: ' + LEFT(I.ENC_ENT_CLI_DireccionEntrega, 50) +
+            ' | Estado: ' + EE.EST_ENT_Nombre +
+            ' | Observaciones: ' + ISNULL(LEFT(I.ENC_ENT_CLI_Observaciones, 50), 'N/A') + ' ]'
+        FROM INSERTED I
+        INNER JOIN DBO.ENC_FACTURAS_TB EF
+            ON I.ENC_ENT_CLI_ENC_FAC_ID = EF.ENC_FAC_ID
+        INNER JOIN DBO.PERSONAS_TB P
+            ON EF.ENC_FAC_PER_ID = P.PER_ID
+        INNER JOIN DBO.ESTADOS_ENTREGAS_TB EE
+            ON I.ENC_ENT_CLI_EST_ENT_ID = EE.EST_ENT_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
+
+
+CREATE OR ALTER TRIGGER DBO.MODIFICAR_ENTREGA_TR
+ON DBO.ENC_ENTREGAS_CLIENTES_TB
+AFTER UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Persona_ID INT         = TRY_CAST(SESSION_CONTEXT(N'PERSONA_ID') AS INT);
+    DECLARE @Origen     VARCHAR(75) = TRY_CAST(SESSION_CONTEXT(N'ORIGEN') AS VARCHAR(75));
+
+    IF @Persona_ID IS NULL
+        SET @Persona_ID = 1;
+
+    BEGIN TRY
+        INSERT INTO DBO.AUDITORIAS_TB (
+            AUD_PER_ID,
+            AUD_Accion,
+            AUD_TablaAfectada,
+            AUD_FilaAfectada,
+            AUD_Descripcion,
+            AUD_Antes,
+            AUD_Despues
+        )
+        SELECT
+            @Persona_ID,
+            'UPDATE',
+            'ENC_ENTREGAS_CLIENTES_TB',
+            I.ENC_ENT_CLI_ID,
+            CASE
+                WHEN @Origen IS NOT NULL
+                    THEN 'Se usó ' + @Origen + ' y MODIFICAR_ENTREGA_TR.'
+                ELSE
+                    'Se usó MODIFICAR_ENTREGA_TR.'
+            END,
+            '[ Factura: ' + EF_OLD.ENC_FAC_Numero +
+            ' | Fecha Entrega: ' + CONVERT(VARCHAR(10), D.ENC_ENT_CLI_FechaEntrega, 120) +
+            ' | Dirección: ' + LEFT(D.ENC_ENT_CLI_DireccionEntrega, 50) +
+            ' | Estado: ' + EE_OLD.EST_ENT_Nombre +
+            ' | Observaciones: ' + ISNULL(LEFT(D.ENC_ENT_CLI_Observaciones, 50), 'N/A') + ' ]',
+            '[ Factura: ' + EF_NEW.ENC_FAC_Numero +
+            ' | Fecha Entrega: ' + CONVERT(VARCHAR(10), I.ENC_ENT_CLI_FechaEntrega, 120) +
+            ' | Dirección: ' + LEFT(I.ENC_ENT_CLI_DireccionEntrega, 50) +
+            ' | Estado: ' + EE_NEW.EST_ENT_Nombre +
+            ' | Observaciones: ' + ISNULL(LEFT(I.ENC_ENT_CLI_Observaciones, 50), 'N/A') + ' ]'
+        FROM DELETED D
+        INNER JOIN INSERTED I
+            ON D.ENC_ENT_CLI_ID = I.ENC_ENT_CLI_ID
+        INNER JOIN DBO.ENC_FACTURAS_TB EF_OLD
+            ON D.ENC_ENT_CLI_ENC_FAC_ID = EF_OLD.ENC_FAC_ID
+        INNER JOIN DBO.ENC_FACTURAS_TB EF_NEW
+            ON I.ENC_ENT_CLI_ENC_FAC_ID = EF_NEW.ENC_FAC_ID
+        INNER JOIN DBO.ESTADOS_ENTREGAS_TB EE_OLD
+            ON D.ENC_ENT_CLI_EST_ENT_ID = EE_OLD.EST_ENT_ID
+        INNER JOIN DBO.ESTADOS_ENTREGAS_TB EE_NEW
+            ON I.ENC_ENT_CLI_EST_ENT_ID = EE_NEW.EST_ENT_ID;
+    END TRY
+    BEGIN CATCH
+        -- Error en Auditoría no debe afectar el Trigger
+    END CATCH
+END;
+GO
