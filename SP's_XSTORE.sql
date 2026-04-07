@@ -4573,21 +4573,22 @@ GO
 
 
 CREATE OR ALTER PROCEDURE DBO.FACTURAR_CLIENTE_SP
-    @NombreUsuario          VARCHAR(75),            -- Vendedor, Administrador, o el mismo Cliente
-    @IdentificacionCliente  VARCHAR(50),            -- Identificación del cliente que compra
-    @NombreUbicacion        VARCHAR(75),            -- Ubicación del inventario desde donde se vende
+    @NombreUsuario          VARCHAR(75),
+    @IdentificacionCliente  VARCHAR(50),
     @ProductosJSON          NVARCHAR(MAX),          -- [{"PRD_Descripcion":"...","TipoProducto":"...","Marca":"...","Proveedor":"...","Cantidad":N}, ...]
-    @DireccionEntrega       VARCHAR(150)  = NULL,   -- Entrega (opcional): si se pasa @DireccionEntrega, se activa el flujo de entrega
+    @DireccionEntrega       VARCHAR(150)  = NULL,
     @ObservacionesEntrega   VARCHAR(150)  = NULL,
-    @DiasEntrega            INT           = 3,      -- NUEVO: Días para la entrega (default 3)
-    @CostoPorDiaEnvio       DECIMAL(10,2) = 750.00  -- NUEVO: Costo por día de envío (default 750.00)
+    @DiasEntrega            INT           = 3,
+    @CostoPorDiaEnvio       DECIMAL(10,2) = 750.00
 AS
 BEGIN
 
     SET XACT_ABORT ON;
     SET NOCOUNT ON;
 
-    -- Variables generales
+    -- =========================================================================
+    -- VARIABLES
+    -- =========================================================================
     DECLARE @Persona_ID_Ejecutor    INT;
     DECLARE @RolEjecutor            VARCHAR(50);
     DECLARE @NombreEjecutor         VARCHAR(150);
@@ -4598,233 +4599,187 @@ BEGIN
     DECLARE @MontoMetaActual        DECIMAL(10,2);
     DECLARE @NombreTipoAnterior     VARCHAR(50);
 
-    DECLARE @UBI_INV_ID             INT;
     DECLARE @ENC_FAC_ID             INT;
     DECLARE @NumeroFactura          VARCHAR(75);
-    DECLARE @FechaHoy               DATE = CAST(GETDATE() AS DATE);
+    DECLARE @FechaHoy               DATE = CAST(SYSDATETIME() AS DATE);
 
-    -- Totales encabezado (usar precisión alta para intermedios)
-    DECLARE @Subtotal               DECIMAL(19,4) = 0.0000;  -- Cambiado a 19,4 para precisión
+    DECLARE @Subtotal               DECIMAL(19,4) = 0.0000;
     DECLARE @DescuentoTotal         DECIMAL(19,4) = 0.0000;
     DECLARE @ImpuestoPct            DECIMAL(5,2)  = 13.00;
     DECLARE @ImpuestoTotal          DECIMAL(19,4) = 0.0000;
     DECLARE @CostoEnvio             DECIMAL(19,4) = 0.0000;
     DECLARE @Total                  DECIMAL(19,4) = 0.0000;
 
-    -- Entrega
     DECLARE @EsEntrega              BIT = 0;
     DECLARE @FechaEntrega           DATE;
     DECLARE @EST_ENT_ID_Sucursal    INT;
 
-    -- Upgrade de categoría
     DECLARE @NuevoTipo_PER_ID       INT;
     DECLARE @NombreTipoNuevo        VARCHAR(50);
     DECLARE @MontoAcumulado         DECIMAL(10,2);
-
-    -- Validación de descuento neutro (early check)
     DECLARE @DESC_ID_Neutro         INT;
 
-    -- Normalización
+    -- Tabla de salida para capturar el ID generado por el INSERT (reemplaza SCOPE_IDENTITY)
+    DECLARE @InsertedFactura        TABLE (ENC_FAC_ID INT);
+
+    -- =========================================================================
+    -- BLOQUE 1 — Validaciones de parámetros (sin transacción, sin TRY anidado)
+    -- =========================================================================
     SET @IdentificacionCliente = TRIM(ISNULL(@IdentificacionCliente, ''));
-    SET @NombreUbicacion       = TRIM(ISNULL(@NombreUbicacion, ''));
     SET @DireccionEntrega      = NULLIF(TRIM(ISNULL(@DireccionEntrega, '')), '');
     SET @ObservacionesEntrega  = NULLIF(TRIM(ISNULL(@ObservacionesEntrega, '')), '');
-    
-    -- Validación de nuevos parámetros
+
     IF @DiasEntrega < 0
-    BEGIN
-        RAISERROR('Error: Los días de entrega no pueden ser negativos.', 16, 1);
-        RETURN;
-    END;
+        THROW 50001, N'Error: Los días de entrega no pueden ser negativos.', 1;
 
     IF @CostoPorDiaEnvio < 0
+        THROW 50001, N'Error: El costo por día de envío no puede ser negativo.', 1;
+
+    IF LEN(@IdentificacionCliente) = 0
+        THROW 50001, N'Error: La identificación del cliente no puede estar vacía.', 1;
+
+    IF @ProductosJSON IS NULL OR LEN(TRIM(@ProductosJSON)) = 0
+        THROW 50001, N'Error: Debe especificar al menos un producto.', 1;
+
+    -- =========================================================================
+    -- BLOQUE 2 — Parseo y validación del JSON (sin transacción)
+    -- El TRY anidado aquí es seguro porque no hay transacción activa todavía.
+    -- =========================================================================
+    CREATE TABLE #ProductosFactura (
+        PRD_Descripcion VARCHAR(150),
+        TipoProducto    VARCHAR(75),
+        Marca           VARCHAR(75),
+        Proveedor       VARCHAR(150),
+        Cantidad        INT,
+        PRIMARY KEY (PRD_Descripcion, TipoProducto, Marca, Proveedor)
+    );
+
+    BEGIN TRY
+        -- OPENJSON con schema explícito: más eficiente y legible que JSON_VALUE por columna
+        INSERT INTO #ProductosFactura (PRD_Descripcion, TipoProducto, Marca, Proveedor, Cantidad)
+        SELECT
+            TRIM(j.PRD_Descripcion),
+            TRIM(j.TipoProducto),
+            TRIM(j.Marca),
+            TRIM(j.Proveedor),
+            TRY_CAST(j.Cantidad AS INT)         -- TRY_CAST: NULL si el valor no es numérico
+        FROM OPENJSON(@ProductosJSON) WITH (
+            PRD_Descripcion NVARCHAR(150) '$.PRD_Descripcion',
+            TipoProducto    NVARCHAR(75)  '$.TipoProducto',
+            Marca           NVARCHAR(75)  '$.Marca',
+            Proveedor       NVARCHAR(150) '$.Proveedor',
+            Cantidad        NVARCHAR(20)  '$.Cantidad'   -- como string para TRY_CAST seguro
+        ) AS j;
+    END TRY
+    BEGIN CATCH
+        DROP TABLE IF EXISTS #ProductosFactura;
+        THROW 50001, N'Error: El formato del JSON de productos no es válido.', 1;
+    END CATCH;
+
+    IF NOT EXISTS (SELECT 1 FROM #ProductosFactura)
     BEGIN
-        RAISERROR('Error: El costo por día de envío no puede ser negativo.', 16, 1);
-        RETURN;
+        DROP TABLE IF EXISTS #ProductosFactura;
+        THROW 50001, N'Error: El JSON de productos no contiene ningún ítem válido.', 1;
     END;
 
+    IF EXISTS (SELECT 1 FROM #ProductosFactura WHERE Cantidad IS NULL OR Cantidad <= 0)
+    BEGIN
+        DROP TABLE IF EXISTS #ProductosFactura;
+        THROW 50001, N'Error: Todos los productos deben tener una cantidad mayor a 0.', 1;
+    END;
+
+    IF EXISTS (
+        SELECT 1 FROM #ProductosFactura
+        WHERE ISNULL(PRD_Descripcion,'') = '' OR ISNULL(TipoProducto,'') = ''
+           OR ISNULL(Marca,'')           = '' OR ISNULL(Proveedor,'')    = ''
+    )
+    BEGIN
+        DROP TABLE IF EXISTS #ProductosFactura;
+        THROW 50001, N'Error: Todos los productos deben tener Descripción, Tipo, Marca y Proveedor.', 1;
+    END;
+
+    -- =========================================================================
+    -- BLOQUE 3 — Transacción principal (sin TRY anidados que escriban en BD)
+    -- =========================================================================
     BEGIN TRY
 
         BEGIN TRANSACTION;
 
-        -- 0. Validar existencia del descuento neutro (0%) ANTES de procesar
-        -- Esto evita procesar toda la factura para luego fallar al final
+        -- 0. Validar descuento neutro
         SELECT TOP 1 @DESC_ID_Neutro = DESC_ID
         FROM DBO.DESCUENTOS_TB
-        WHERE DESC_DescuentoPct = 0.00
-            AND DESC_Estado = 1
+        WHERE DESC_DescuentoPct = 0.00 AND DESC_Estado = 1
         ORDER BY DESC_ID;
 
         IF @DESC_ID_Neutro IS NULL
-        BEGIN
-            RAISERROR('Error de Configuración: No existe un registro de descuento con 0%% activo en DESCUENTOS_TB. Cree un descuento "Sin Descuento" o "N/A" con 0%% para permitir facturar productos sin descuento asignado.', 16, 1);
-            RETURN;
-        END;
+            THROW 50002, N'Error de Configuración: No existe un registro de descuento con 0% activo en DESCUENTOS_TB.', 1;
 
-        -- 1. Validar ejecutor (Vendedor, Administrador o Cliente)
+        -- 1. Validar ejecutor
         SELECT
             @Persona_ID_Ejecutor = S.SESION_PER_ID,
-            @RolEjecutor = R.ROL_Nombre,
-            @NombreEjecutor = P.PER_NombreCompleto
+            @RolEjecutor         = R.ROL_Nombre,
+            @NombreEjecutor      = P.PER_NombreCompleto
         FROM DBO.SESIONES_TB S
-        INNER JOIN DBO.ROLES_TB R
-            ON S.SESION_ROL_ID = R.ROL_ID
-        INNER JOIN DBO.PERSONAS_TB P
-            ON S.SESION_PER_ID = P.PER_ID
+        INNER JOIN DBO.ROLES_TB R    ON S.SESION_ROL_ID = R.ROL_ID
+        INNER JOIN DBO.PERSONAS_TB P ON S.SESION_PER_ID = P.PER_ID
         WHERE S.SESION_NombreUsuario = @NombreUsuario
-            AND S.SESION_Estado = 1
-            AND R.ROL_Nombre IN ('Vendedor', 'Administrador', 'Cliente');
+          AND S.SESION_Estado = 1
+          AND R.ROL_Nombre IN ('Vendedor', 'Administrador', 'Cliente');
 
         IF @Persona_ID_Ejecutor IS NULL
         BEGIN
-            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos para facturar.', 16, 1, @NombreUsuario);
-            RETURN;
+            DECLARE @msgEjecutor NVARCHAR(500) = CONCAT(N'Acceso denegado: El usuario [', @NombreUsuario, N'] no tiene permisos para facturar.');
+            THROW 50003, @msgEjecutor, 1;
         END;
 
         -- 2. Validar cliente
-        IF LEN(@IdentificacionCliente) = 0
-        BEGIN
-            RAISERROR('Error: La identificación del cliente no puede estar vacía.', 16, 1);
-            RETURN;
-        END;
-
         SELECT
-            @Cliente_ID = P.PER_ID,
-            @NombreCliente = P.PER_NombreCompleto,
-            @TIPO_PER_ID_Cliente = P.PER_TIPO_PER_ID,
-            @DescuentoPctCliente = TP.TIPO_PER_DescuentoPct,
-            @MontoMetaActual = TP.TIPO_PER_MontoMeta,
-            @NombreTipoAnterior = TP.TIPO_PER_Nombre
+            @Cliente_ID             = P.PER_ID,
+            @NombreCliente          = P.PER_NombreCompleto,
+            @TIPO_PER_ID_Cliente    = P.PER_TIPO_PER_ID,
+            @DescuentoPctCliente    = TP.TIPO_PER_DescuentoPct,
+            @MontoMetaActual        = TP.TIPO_PER_MontoMeta,
+            @NombreTipoAnterior     = TP.TIPO_PER_Nombre
         FROM DBO.PERSONAS_TB P
-        INNER JOIN DBO.TIPOS_PERSONAS_TB TP
-            ON P.PER_TIPO_PER_ID = TP.TIPO_PER_ID
-        WHERE P.PER_Identificacion = @IdentificacionCliente
-            AND P.PER_Estado = 1;
+        INNER JOIN DBO.TIPOS_PERSONAS_TB TP ON P.PER_TIPO_PER_ID = TP.TIPO_PER_ID
+        WHERE P.PER_Identificacion = @IdentificacionCliente AND P.PER_Estado = 1;
 
         IF @Cliente_ID IS NULL
         BEGIN
-            RAISERROR('Error: No existe un cliente activo con la identificación [%s].', 16, 1, @IdentificacionCliente);
-            RETURN;
+            DECLARE @msgCliente NVARCHAR(500) = CONCAT(N'Error: No existe un cliente activo con la identificación [', @IdentificacionCliente, N'].');
+            THROW 50001, @msgCliente, 1;
         END;
 
-        -- Un Cliente solo puede facturarse a sí mismo
         IF @RolEjecutor = 'Cliente' AND @Persona_ID_Ejecutor != @Cliente_ID
-        BEGIN
-            RAISERROR('Acceso denegado: Un cliente solo puede realizar compras a nombre propio.', 16, 1);
-            RETURN;
-        END;
+            THROW 50003, N'Acceso denegado: Un cliente solo puede realizar compras a nombre propio.', 1;
 
-        -- 3. Validar ubicación
-        IF LEN(@NombreUbicacion) = 0
-        BEGIN
-            RAISERROR('Error: La ubicación no puede estar vacía.', 16, 1);
-            RETURN;
-        END;
-
-        SELECT @UBI_INV_ID = UBI_INV_ID
-        FROM DBO.UBI_INVENTARIOS_TB
-        WHERE UBI_INV_Nombre = @NombreUbicacion
-            AND UBI_INV_Estado = 1;
-
-        IF @UBI_INV_ID IS NULL
-        BEGIN
-            RAISERROR('Error: La ubicación [%s] no existe o está inactiva.', 16, 1, @NombreUbicacion);
-            RETURN;
-        END;
-
-        -- 4. Validar y preparar entrega (si se indicó dirección)
+        -- 3. Validar entrega
         IF @DireccionEntrega IS NOT NULL
         BEGIN
-            SET @EsEntrega = 1;
+            SET @EsEntrega    = 1;
             SET @FechaEntrega = DATEADD(DAY, @DiasEntrega, @FechaHoy);
-            SET @CostoEnvio = CAST(@DiasEntrega * @CostoPorDiaEnvio AS DECIMAL(19,4));
+            SET @CostoEnvio   = CAST(@DiasEntrega * @CostoPorDiaEnvio AS DECIMAL(19,4));
 
             SELECT @EST_ENT_ID_Sucursal = EST_ENT_ID
             FROM DBO.ESTADOS_ENTREGAS_TB
-            WHERE EST_ENT_Nombre = 'En Sucursal'
-                AND EST_ENT_Estado = 1;
+            WHERE EST_ENT_Nombre = 'En Sucursal' AND EST_ENT_Estado = 1;
 
             IF @EST_ENT_ID_Sucursal IS NULL
-            BEGIN
-                RAISERROR('Error: No se encontró el estado de entrega inicial [En Sucursal]. Verifique la tabla ESTADOS_ENTREGAS_TB.', 16, 1);
-                RETURN;
-            END;
+                THROW 50002, N'Error: No se encontró el estado [En Sucursal] en ESTADOS_ENTREGAS_TB.', 1;
         END;
 
-        -- 5. Validar JSON de productos
-        IF @ProductosJSON IS NULL OR LEN(TRIM(@ProductosJSON)) = 0
-        BEGIN
-            RAISERROR('Error: Debe especificar al menos un producto.', 16, 1);
-            RETURN;
-        END;
-
-        -- Tabla temporal con los datos del JSON
-        CREATE TABLE #ProductosFactura (
-            PRD_Descripcion VARCHAR(150),
-            TipoProducto VARCHAR(75),
-            Marca VARCHAR(75),
-            Proveedor VARCHAR(150),
-            Cantidad INT,
-            PRIMARY KEY (PRD_Descripcion, TipoProducto, Marca, Proveedor) -- Prevenir duplicados a nivel BD
-        );
-
-        BEGIN TRY
-            INSERT INTO #ProductosFactura (PRD_Descripcion, TipoProducto, Marca, Proveedor, Cantidad)
-            SELECT
-                TRIM(JSON_VALUE(value, '$.PRD_Descripcion')),
-                TRIM(JSON_VALUE(value, '$.TipoProducto')),
-                TRIM(JSON_VALUE(value, '$.Marca')),
-                TRIM(JSON_VALUE(value, '$.Proveedor')),
-                TRY_CAST(JSON_VALUE(value, '$.Cantidad') AS INT)
-            FROM OPENJSON(@ProductosJSON);
-        END TRY
-        BEGIN CATCH
-            RAISERROR('Error: El formato de envío de productos no es válido. Verifique que sea un JSON válido con los campos requeridos.', 16, 1);
-            RETURN;
-        END CATCH;
-
-        IF NOT EXISTS (SELECT 1 FROM #ProductosFactura)
-        BEGIN
-            DROP TABLE IF EXISTS #ProductosFactura;
-            RAISERROR('Error: El JSON de productos no contiene ningún ítem válido.', 16, 1);
-            RETURN;
-        END;
-
-        -- Cantidad inválida
-        IF EXISTS (
-            SELECT 1 FROM #ProductosFactura
-            WHERE Cantidad IS NULL OR Cantidad <= 0
-        )
-        BEGIN
-            DROP TABLE IF EXISTS #ProductosFactura;
-            RAISERROR('Error: Todos los productos deben tener una cantidad mayor a 0.', 16, 1);
-            RETURN;
-        END;
-
-        -- Campos requeridos vacíos
-        IF EXISTS (
-            SELECT 1 FROM #ProductosFactura
-            WHERE ISNULL(PRD_Descripcion, '') = ''
-               OR ISNULL(TipoProducto, '')    = ''
-               OR ISNULL(Marca, '')           = ''
-               OR ISNULL(Proveedor, '')       = ''
-        )
-        BEGIN
-            DROP TABLE IF EXISTS #ProductosFactura;
-            RAISERROR('Error: Todos los productos deben tener Descripción, Tipo de Producto, Marca y Proveedor.', 16, 1);
-            RETURN;
-        END;
-
-        -- 6. Resolver productos y calcular líneas
+        -- 4. Resolver productos: ubicación automática por mayor stock disponible
         CREATE TABLE #LineasFactura (
             PRD_ID          INT,
             PRD_Descripcion VARCHAR(150),
             Cantidad        INT,
             PrecioUnitario  DECIMAL(10,2),
-            DESC_ID         INT,            -- NULL si el producto no tiene descuento asignado
+            DESC_ID         INT,
             DescuentoMonto  DECIMAL(10,2),
-            SubtotalLinea   DECIMAL(10,2),  -- PrecioUnitario * Cantidad (bruto, sin descuentos)
-            TotalLinea      DECIMAL(10,2)   -- Tras aplicar descuentos (suma de porcentajes sobre precio original)
+            SubtotalLinea   DECIMAL(10,2),
+            TotalLinea      DECIMAL(10,2),
+            UBI_INV_ID      INT,
+            NombreUbicacion VARCHAR(75)
         );
 
         DECLARE @PRD_Desc           VARCHAR(150);
@@ -4837,10 +4792,12 @@ BEGIN
         DECLARE @DESC_ID_PRD        INT;
         DECLARE @DESC_Pct_PRD       DECIMAL(5,2);
         DECLARE @DescPctTotal       DECIMAL(5,2);
-        DECLARE @SubLinea           DECIMAL(19,4); -- Precisión alta
+        DECLARE @SubLinea           DECIMAL(19,4);
         DECLARE @TotalLinea_Var     DECIMAL(19,4);
         DECLARE @DescMonto          DECIMAL(19,4);
-        DECLARE @StockUbicacion     INT;
+        DECLARE @UBI_INV_ID_Linea   INT;
+        DECLARE @NombreUbi_Linea    VARCHAR(75);
+        DECLARE @StockDisponible    INT;
 
         DECLARE cur_productos CURSOR LOCAL FAST_FORWARD FOR
             SELECT PRD_Descripcion, TipoProducto, Marca, Proveedor, Cantidad
@@ -4851,105 +4808,96 @@ BEGIN
 
         WHILE @@FETCH_STATUS = 0
         BEGIN
-            SET @PRD_ID_Var  = NULL;
-            SET @PRD_Precio  = NULL;
-            SET @DESC_ID_PRD = NULL;
+            SET @PRD_ID_Var       = NULL;
+            SET @UBI_INV_ID_Linea = NULL;
 
-            -- Resolver producto por la combinación acordada
-            SELECT
-                @PRD_ID_Var  = PRD.PRD_ID,
-                @PRD_Precio  = PRD.PRD_PrecioVenta,
-                @DESC_ID_PRD = PRD.PRD_DESC_ID
+            -- Buscar producto + ubicación con stock suficiente (mayor stock primero)
+            SELECT TOP 1
+                @PRD_ID_Var       = PRD.PRD_ID,
+                @PRD_Precio       = PRD.PRD_PrecioVenta,
+                @DESC_ID_PRD      = PRD.PRD_DESC_ID,
+                @UBI_INV_ID_Linea = INV.INV_UBI_INV_ID,
+                @NombreUbi_Linea  = UBI.UBI_INV_Nombre,
+                @StockDisponible  = INV.INV_StockActual
             FROM DBO.PRODUCTOS_TB PRD
-            INNER JOIN DBO.TIPOS_PRODUCTOS_TB TP
-                ON PRD.PRD_TIPO_PRD_ID = TP.TIPO_PRD_ID
-            INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP
-                ON PRD.PRD_MARC_PRD_ID = MP.MARC_PRD_ID
-            INNER JOIN DBO.PROVEEDORES_TB PRV
-                ON PRD.PRD_PRV_ID = PRV.PRV_ID
-            INNER JOIN DBO.PERSONAS_TB P
-                ON PRV.PRV_PER_ID = P.PER_ID
-            WHERE PRD.PRD_Descripcion    = @PRD_Desc
-                AND TP.TIPO_PRD_Nombre   = @PRD_Tipo
-                AND MP.MARC_PRD_Nombre   = @PRD_Marca
-                AND P.PER_NombreCompleto = @PRD_Proveedor
-                AND PRD.PRD_Estado       = 1;
+            INNER JOIN DBO.TIPOS_PRODUCTOS_TB  TP  ON PRD.PRD_TIPO_PRD_ID = TP.TIPO_PRD_ID
+            INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP  ON PRD.PRD_MARC_PRD_ID = MP.MARC_PRD_ID
+            INNER JOIN DBO.PROVEEDORES_TB       PRV ON PRD.PRD_PRV_ID      = PRV.PRV_ID
+            INNER JOIN DBO.PERSONAS_TB          P   ON PRV.PRV_PER_ID      = P.PER_ID
+            INNER JOIN DBO.INVENTARIOS_TB       INV ON PRD.PRD_ID          = INV.INV_PRD_ID
+                                                    AND INV.INV_Estado      = 1
+                                                    AND INV.INV_StockActual >= @PRD_Cant
+            INNER JOIN DBO.UBI_INVENTARIOS_TB   UBI ON INV.INV_UBI_INV_ID  = UBI.UBI_INV_ID
+                                                    AND UBI.UBI_INV_Estado  = 1
+            WHERE PRD.PRD_Descripcion  = @PRD_Desc
+              AND TP.TIPO_PRD_Nombre   = @PRD_Tipo
+              AND MP.MARC_PRD_Nombre   = @PRD_Marca
+              AND P.PER_NombreCompleto = @PRD_Proveedor
+              AND PRD.PRD_Estado       = 1
+            ORDER BY INV.INV_StockActual DESC, UBI.UBI_INV_Nombre ASC;
 
+            -- Si no se encontró, distinguir: ¿no existe o no hay stock?
             IF @PRD_ID_Var IS NULL
             BEGIN
-                CLOSE cur_productos; DEALLOCATE cur_productos;
-                DROP TABLE IF EXISTS #ProductosFactura;
-                DROP TABLE IF EXISTS #LineasFactura;
-                RAISERROR('Error: El producto [%s] de tipo [%s], marca [%s], proveedor [%s] no existe o está inactivo.', 16, 1, @PRD_Desc, @PRD_Tipo, @PRD_Marca, @PRD_Proveedor);
-                RETURN;
+                DECLARE @ExistePRD INT;
+                SELECT @ExistePRD = COUNT(*)
+                FROM DBO.PRODUCTOS_TB PRD
+                INNER JOIN DBO.TIPOS_PRODUCTOS_TB  TP  ON PRD.PRD_TIPO_PRD_ID = TP.TIPO_PRD_ID
+                INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP  ON PRD.PRD_MARC_PRD_ID = MP.MARC_PRD_ID
+                INNER JOIN DBO.PROVEEDORES_TB       PRV ON PRD.PRD_PRV_ID     = PRV.PRV_ID
+                INNER JOIN DBO.PERSONAS_TB          P   ON PRV.PRV_PER_ID     = P.PER_ID
+                WHERE PRD.PRD_Descripcion  = @PRD_Desc
+                  AND TP.TIPO_PRD_Nombre   = @PRD_Tipo
+                  AND MP.MARC_PRD_Nombre   = @PRD_Marca
+                  AND P.PER_NombreCompleto = @PRD_Proveedor
+                  AND PRD.PRD_Estado       = 1;
+
+                -- El CATCH maneja: cursor, temp tables, session context y re-throw
+                DECLARE @msgProducto NVARCHAR(1000) =
+                    CASE WHEN @ExistePRD = 0
+                        THEN CONCAT(N'Error: El producto [', @PRD_Desc, N'] de tipo [', @PRD_Tipo,
+                                    N'], marca [', @PRD_Marca, N'], proveedor [', @PRD_Proveedor,
+                                    N'] no existe o está inactivo.')
+                        ELSE CONCAT(N'Error: Stock insuficiente para [', @PRD_Desc,
+                                    N']. Ninguna ubicación tiene las ',
+                                    CAST(@PRD_Cant AS NVARCHAR(10)), N' unidades requeridas.')
+                    END;
+                THROW 50001, @msgProducto, 1;
             END;
 
-            -- Verificar stock en la ubicación indicada
-            SELECT @StockUbicacion = ISNULL(INV_StockActual, 0)
-            FROM DBO.INVENTARIOS_TB
-            WHERE INV_PRD_ID       = @PRD_ID_Var
-                AND INV_UBI_INV_ID = @UBI_INV_ID
-                AND INV_Estado     = 1;
-
-            IF @StockUbicacion IS NULL
-            BEGIN
-                CLOSE cur_productos; DEALLOCATE cur_productos;
-                DROP TABLE IF EXISTS #ProductosFactura;
-                DROP TABLE IF EXISTS #LineasFactura;
-                RAISERROR('Error: El producto [%s] no está registrado en la ubicación [%s].', 16, 1, @PRD_Desc, @NombreUbicacion);
-                RETURN;
-            END;
-
-            IF @StockUbicacion < @PRD_Cant
-            BEGIN
-                CLOSE cur_productos; DEALLOCATE cur_productos;
-                DROP TABLE IF EXISTS #ProductosFactura;
-                DROP TABLE IF EXISTS #LineasFactura;
-                RAISERROR('Error: Stock insuficiente para [%s] en [%s]. Disponible: %d, Solicitado: %d.',
-                    16, 1, @PRD_Desc, @NombreUbicacion, @StockUbicacion, @PRD_Cant);
-                RETURN;
-            END;
-
-            -- Descuento del producto (solo si está vigente hoy)
+            -- Descuento del producto vigente hoy
             SET @DESC_Pct_PRD = 0.00;
             IF @DESC_ID_PRD IS NOT NULL
             BEGIN
                 SELECT @DESC_Pct_PRD = ISNULL(DESC_DescuentoPct, 0.00)
                 FROM DBO.DESCUENTOS_TB
-                WHERE DESC_ID       = @DESC_ID_PRD
-                    AND DESC_Estado = 1
-                    AND @FechaHoy  >= DESC_FechaInicio
-                    AND @FechaHoy  <= DESC_FechaFin;
+                WHERE DESC_ID = @DESC_ID_PRD AND DESC_Estado = 1
+                  AND @FechaHoy >= DESC_FechaInicio AND @FechaHoy <= DESC_FechaFin;
 
                 SET @DESC_Pct_PRD = ISNULL(@DESC_Pct_PRD, 0.00);
             END;
 
-            -- Suma de ambos porcentajes aplicados sobre el precio original
-            SET @DescPctTotal  = @DESC_Pct_PRD + @DescuentoPctCliente;
-            SET @SubLinea      = CAST(@PRD_Precio * @PRD_Cant AS DECIMAL(19,4));
+            SET @DescPctTotal   = @DESC_Pct_PRD + @DescuentoPctCliente;
+            SET @SubLinea       = CAST(@PRD_Precio * @PRD_Cant AS DECIMAL(19,4));
 
-            -- Cálculo con precisión alta
-            SET @TotalLinea_Var = CAST(
-                @PRD_Precio * (1.0 - @DescPctTotal / 100.0) * @PRD_Cant
-            AS DECIMAL(19,4));
-
-            -- Evitar totales negativos por porcentajes combinados > 100
-            IF @TotalLinea_Var < 0
-                SET @TotalLinea_Var = 0.0000;
+            -- GREATEST (SQL 2022): piso en cero sin necesidad de IF auxiliar
+            SET @TotalLinea_Var = GREATEST(
+                CAST(0 AS DECIMAL(19,4)),
+                CAST(@PRD_Precio * (1.0 - @DescPctTotal / 100.0) * @PRD_Cant AS DECIMAL(19,4))
+            );
 
             SET @DescMonto = CAST(@SubLinea - @TotalLinea_Var AS DECIMAL(19,4));
 
             INSERT INTO #LineasFactura (
-                PRD_ID, PRD_Descripcion, Cantidad,
-                PrecioUnitario, DESC_ID,
-                DescuentoMonto, SubtotalLinea, TotalLinea
+                PRD_ID, PRD_Descripcion, Cantidad, PrecioUnitario, DESC_ID,
+                DescuentoMonto, SubtotalLinea, TotalLinea, UBI_INV_ID, NombreUbicacion
             )
             VALUES (
-                @PRD_ID_Var, @PRD_Desc, @PRD_Cant,
-                @PRD_Precio, @DESC_ID_PRD,
-                CAST(@DescMonto AS DECIMAL(10,2)), 
-                CAST(@SubLinea AS DECIMAL(10,2)), 
-                CAST(@TotalLinea_Var AS DECIMAL(10,2))
+                @PRD_ID_Var, @PRD_Desc, @PRD_Cant, @PRD_Precio, @DESC_ID_PRD,
+                CAST(@DescMonto AS DECIMAL(10,2)),
+                CAST(@SubLinea AS DECIMAL(10,2)),
+                CAST(@TotalLinea_Var AS DECIMAL(10,2)),
+                @UBI_INV_ID_Linea, @NombreUbi_Linea
             );
 
             FETCH NEXT FROM cur_productos INTO @PRD_Desc, @PRD_Tipo, @PRD_Marca, @PRD_Proveedor, @PRD_Cant;
@@ -4958,30 +4906,37 @@ BEGIN
         CLOSE cur_productos;
         DEALLOCATE cur_productos;
 
-        -- 7. Calcular totales del encabezado (redondeo final a 2 decimales)
+        -- 5. Totales
+        -- Los precios de venta YA incluyen IVA → se extrae, no se añade encima.
+        -- IVA incluido = TotalNeto * 13/113  (inverso del factor 1.13)
+        -- @Subtotal = suma bruta (para calcular descuento), luego se reemplaza por el neto.
+        DECLARE @SubtotalBruto DECIMAL(19,4);
         SELECT
-            @Subtotal       = SUM(CAST(SubtotalLinea AS DECIMAL(19,4))),
+            @SubtotalBruto  = SUM(CAST(SubtotalLinea AS DECIMAL(19,4))),
             @DescuentoTotal = SUM(CAST(DescuentoMonto AS DECIMAL(19,4)))
         FROM #LineasFactura;
 
-        DECLARE @TotalNeto DECIMAL(19,4) = @Subtotal - @DescuentoTotal;
-        SET @ImpuestoTotal = CAST(@TotalNeto * @ImpuestoPct / 100.0 AS DECIMAL(19,4));
-        SET @Total         = @TotalNeto + @ImpuestoTotal + @CostoEnvio;
+        -- Neto = suma de TotalLinea (precio final por línea, con descuento, IVA incluido)
+        DECLARE @TotalNeto DECIMAL(19,4) = @SubtotalBruto - @DescuentoTotal;
+        SET @ImpuestoTotal = CAST(@TotalNeto * @ImpuestoPct / (100.0 + @ImpuestoPct) AS DECIMAL(19,4));
+        SET @Total         = @TotalNeto + @CostoEnvio;
 
-        -- 8. Generar número de factura único: FAC-YYYYMMDD-XXXXX
-        -- MEJORA: Usar UPDLOCK y HOLDLOCK para prevenir race conditions
-        DECLARE @FechaParte     VARCHAR(8)  = CONVERT(VARCHAR(8), GETDATE(), 112);
+        -- Subtotal almacenado = neto con descuento (IVA incluido), no el bruto.
+        -- Así los campos del encabezado cuadran: Subtotal + Envío = Total
+        SET @Subtotal = @TotalNeto;
+
+        -- 6. Número de factura único: FAC-YYYYMMDD-XXXXX
+        DECLARE @FechaParte     VARCHAR(8) = CONVERT(VARCHAR(8), SYSDATETIME(), 112);
         DECLARE @Consecutivo    INT;
         DECLARE @ConsecutivoStr VARCHAR(5);
 
         SELECT @Consecutivo = ISNULL(COUNT(*), 0) + 1
-        FROM DBO.ENC_FACTURAS_TB WITH (UPDLOCK, HOLDLOCK) -- Bloquea para evitar duplicados concurrentes
+        FROM DBO.ENC_FACTURAS_TB WITH (UPDLOCK, HOLDLOCK)
         WHERE ENC_FAC_Numero LIKE 'FAC-' + @FechaParte + '-%';
 
         SET @ConsecutivoStr = RIGHT('00000' + CAST(@Consecutivo AS VARCHAR(5)), 5);
         SET @NumeroFactura  = 'FAC-' + @FechaParte + '-' + @ConsecutivoStr;
 
-        -- Garantizar unicidad ante condiciones extremas de concurrencia
         WHILE EXISTS (SELECT 1 FROM DBO.ENC_FACTURAS_TB WHERE ENC_FAC_Numero = @NumeroFactura)
         BEGIN
             SET @Consecutivo    = @Consecutivo + 1;
@@ -4989,95 +4944,72 @@ BEGIN
             SET @NumeroFactura  = 'FAC-' + @FechaParte + '-' + @ConsecutivoStr;
         END;
 
-        -- 9. Insertar encabezado de factura
+        -- 7. Insertar encabezado
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', @Persona_ID_Ejecutor;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     'FACTURAR_CLIENTE_SP';
 
+        -- OUTPUT INTO reemplaza SCOPE_IDENTITY(): más seguro en escenarios con triggers
         INSERT INTO DBO.ENC_FACTURAS_TB (
-            ENC_FAC_Numero,
-            ENC_FAC_PER_ID,
-            ENC_FAC_Subtotal,
-            ENC_FAC_DescuentoTotal,
-            ENC_FAC_ImpuestoPct,
-            ENC_FAC_ImpuestoTotal,
-            ENC_FAC_CostoEnvio,
-            ENC_FAC_Total
+            ENC_FAC_Numero, ENC_FAC_PER_ID,
+            ENC_FAC_Subtotal, ENC_FAC_DescuentoTotal,
+            ENC_FAC_ImpuestoPct, ENC_FAC_ImpuestoTotal,
+            ENC_FAC_CostoEnvio, ENC_FAC_Total
         )
+        OUTPUT INSERTED.ENC_FAC_ID INTO @InsertedFactura
         VALUES (
-            @NumeroFactura,
-            @Cliente_ID,
-            CAST(@Subtotal AS DECIMAL(10,2)),
-            CAST(@DescuentoTotal AS DECIMAL(10,2)),
-            @ImpuestoPct,
-            CAST(@ImpuestoTotal AS DECIMAL(10,2)),
-            CAST(@CostoEnvio AS DECIMAL(10,2)),
-            CAST(@Total AS DECIMAL(10,2))
+            @NumeroFactura, @Cliente_ID,
+            CAST(@Subtotal AS DECIMAL(10,2)),      CAST(@DescuentoTotal AS DECIMAL(10,2)),
+            @ImpuestoPct,                           CAST(@ImpuestoTotal AS DECIMAL(10,2)),
+            CAST(@CostoEnvio AS DECIMAL(10,2)),     CAST(@Total AS DECIMAL(10,2))
         );
 
-        SET @ENC_FAC_ID = SCOPE_IDENTITY();
+        SELECT @ENC_FAC_ID = ENC_FAC_ID FROM @InsertedFactura;
 
-        -- 10. Insertar detalle de factura
+        -- 8. Insertar detalle
         INSERT INTO DBO.DET_FACTURAS_TB (
-            DET_FAC_ENC_FAC_ID,
-            DET_FAC_PRD_ID,
-            DET_FAC_Cantidad,
-            DET_FAC_PrecioUnitario,
-            DET_FAC_DESC_ID,
-            DET_FAC_DescuentoMonto,
-            DET_FAC_SubtotalLinea,
-            DET_FAC_TotalLinea
+            DET_FAC_ENC_FAC_ID, DET_FAC_PRD_ID, DET_FAC_Cantidad,
+            DET_FAC_PrecioUnitario, DET_FAC_DESC_ID,
+            DET_FAC_DescuentoMonto, DET_FAC_SubtotalLinea, DET_FAC_TotalLinea
         )
         SELECT
-            @ENC_FAC_ID,
-            PRD_ID,
-            Cantidad,
-            PrecioUnitario,
-            ISNULL(DESC_ID, @DESC_ID_Neutro), -- Usar el validado al inicio
-            DescuentoMonto,
-            SubtotalLinea,
-            TotalLinea
+            @ENC_FAC_ID, PRD_ID, Cantidad, PrecioUnitario,
+            ISNULL(DESC_ID, @DESC_ID_Neutro),
+            DescuentoMonto, SubtotalLinea, TotalLinea
         FROM #LineasFactura;
 
-        -- 11. Descontar stock desde la ubicación indicada
+        -- 9. Descontar stock por ubicación de cada línea
         UPDATE I
         SET I.INV_StockActual = I.INV_StockActual - LF.Cantidad
         FROM DBO.INVENTARIOS_TB I
         INNER JOIN #LineasFactura LF
-            ON I.INV_PRD_ID = LF.PRD_ID
-        WHERE I.INV_UBI_INV_ID = @UBI_INV_ID
-            AND I.INV_Estado   = 1;
+            ON I.INV_PRD_ID     = LF.PRD_ID
+           AND I.INV_UBI_INV_ID = LF.UBI_INV_ID
+        WHERE I.INV_Estado = 1;
 
-        -- Verificar si algún stock quedó negativo (constraint debería evitarlo, pero por seguridad)
         IF EXISTS (
             SELECT 1 FROM DBO.INVENTARIOS_TB I
-            INNER JOIN #LineasFactura LF ON I.INV_PRD_ID = LF.PRD_ID
-            WHERE I.INV_UBI_INV_ID = @UBI_INV_ID AND I.INV_StockActual < 0
+            INNER JOIN #LineasFactura LF
+                ON I.INV_PRD_ID = LF.PRD_ID AND I.INV_UBI_INV_ID = LF.UBI_INV_ID
+            WHERE I.INV_StockActual < 0
         )
-        BEGIN
-            RAISERROR('Error crítico: Stock insuficiente detectado post-actualización. Posible modificación concurrente.', 16, 1);
-            RETURN;
-        END;
+            THROW 50009, N'Error crítico: Stock negativo detectado post-actualización. Posible modificación concurrente.', 1;
 
-        -- 12. Insertar encabezado de entrega si aplica
+        -- 10. Insertar entrega si aplica
         IF @EsEntrega = 1
         BEGIN
             INSERT INTO DBO.ENC_ENTREGAS_CLIENTES_TB (
-                ENC_ENT_CLI_ENC_FAC_ID,
-                ENC_ENT_CLI_FechaEntrega,
-                ENC_ENT_CLI_DireccionEntrega,
-                ENC_ENT_CLI_Observaciones,
+                ENC_ENT_CLI_ENC_FAC_ID, ENC_ENT_CLI_FechaEntrega,
+                ENC_ENT_CLI_DireccionEntrega, ENC_ENT_CLI_Observaciones,
                 ENC_ENT_CLI_EST_ENT_ID
             )
             VALUES (
-                @ENC_FAC_ID,
-                @FechaEntrega,
-                @DireccionEntrega,
-                @ObservacionesEntrega,
+                @ENC_FAC_ID, @FechaEntrega,
+                @DireccionEntrega, @ObservacionesEntrega,
                 @EST_ENT_ID_Sucursal
             );
         END;
 
-        -- 13. Evaluar upgrade de categoría de cliente
+        -- 11. Upgrade de categoría
         SELECT @MontoAcumulado = ISNULL(SUM(ENC_FAC_Total), 0.00)
         FROM DBO.ENC_FACTURAS_TB
         WHERE ENC_FAC_PER_ID = @Cliente_ID;
@@ -5086,32 +5018,39 @@ BEGIN
             @NuevoTipo_PER_ID = TIPO_PER_ID,
             @NombreTipoNuevo  = TIPO_PER_Nombre
         FROM DBO.TIPOS_PERSONAS_TB
-        WHERE TIPO_PER_Nombre    LIKE 'Cliente%'
-            AND TIPO_PER_Estado  = 1
-            AND TIPO_PER_MontoMeta > @MontoMetaActual
-            AND @MontoAcumulado >= TIPO_PER_MontoMeta
+        WHERE TIPO_PER_Nombre   LIKE 'Cliente%'
+          AND TIPO_PER_Estado    = 1
+          AND TIPO_PER_MontoMeta > @MontoMetaActual
+          AND @MontoAcumulado   >= TIPO_PER_MontoMeta
         ORDER BY TIPO_PER_MontoMeta ASC;
 
         IF @NuevoTipo_PER_ID IS NOT NULL
-        BEGIN
-            UPDATE DBO.PERSONAS_TB
-            SET PER_TIPO_PER_ID = @NuevoTipo_PER_ID
-            WHERE PER_ID = @Cliente_ID;
-        END
+            UPDATE DBO.PERSONAS_TB SET PER_TIPO_PER_ID = @NuevoTipo_PER_ID WHERE PER_ID = @Cliente_ID;
         ELSE
-        BEGIN
             SET @NombreTipoNuevo = @NombreTipoAnterior;
-        END;
 
-        -- 14. Auditoría
+        COMMIT;  -- Transacción cerrada antes de cualquier TRY anidado
+
+        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
+        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
+
+        -- 12. Auditoría — DESPUÉS del COMMIT: sin transacción activa,
+        --     XACT_ABORT no puede doomear nada. Fallo silencioso.
+        DECLARE @UbicacionesUsadas VARCHAR(200);
+
+        -- STRING_AGG reemplaza STUFF/FOR XML PATH: más legible y eficiente (SQL 2017+)
+        SELECT @UbicacionesUsadas =
+            (SELECT STRING_AGG(NombreUbicacion, ', ') WITHIN GROUP (ORDER BY NombreUbicacion)
+             FROM (SELECT DISTINCT NombreUbicacion FROM #LineasFactura) AS T);
+
+        DECLARE @DescAuditoria VARCHAR(250);
+        SET @DescAuditoria =
+            'Factura [' + @NumeroFactura + '] emitida a [' + LEFT(@NombreCliente, 35) + ']. ' +
+            'Total: ' + CONVERT(VARCHAR(15), CAST(@Total AS DECIMAL(10,2))) + '. ' +
+            'Items: ' + CAST((SELECT COUNT(*) FROM #LineasFactura) AS VARCHAR(5)) + '. ' +
+            'Ubicaciones: ' + LEFT(ISNULL(@UbicacionesUsadas, 'N/A'), 50) + '.';
+
         BEGIN TRY
-            DECLARE @DescAuditoria VARCHAR(250);
-            SET @DescAuditoria =
-                'Factura [' + @NumeroFactura + '] emitida a [' + LEFT(@NombreCliente, 35) + ']. ' +
-                'Total: ' + CONVERT(VARCHAR(15), CAST(@Total AS DECIMAL(10,2))) + '. ' +
-                'Items: ' + CAST((SELECT COUNT(*) FROM #LineasFactura) AS VARCHAR(5)) + '. ' +
-                'Ubicación: ' + LEFT(@NombreUbicacion, 15) + '.';
-
             EXEC DBO.REGISTRAR_AUDITORIA_SP
                 @Persona_ID    = @Persona_ID_Ejecutor,
                 @Accion        = 'INSERT',
@@ -5122,115 +5061,88 @@ BEGIN
                 @Despues       = NULL;
         END TRY
         BEGIN CATCH
-            -- Falla en auditoría no interrumpe la facturación
+            -- Falla en auditoría no revierte la factura ya confirmada
         END CATCH;
 
-        COMMIT;
-
-        EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
-        EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
-
-        -- 15. Respuesta: factura completa
-        -- Encabezado
+        -- 13. Respuesta: encabezado
         SELECT
-            EF.ENC_FAC_Numero                                   AS [Número Factura],
-            CONVERT(VARCHAR(19), EF.ENC_FAC_FechaHora, 120)     AS [Fecha y Hora],
-            @NombreUbicacion                                    AS [Sucursal],
-            CLI.PER_NombreCompleto                              AS [Cliente],
-            CLI.PER_Identificacion                              AS [Identificación],
-            TP_CLI.TIPO_PER_Nombre                              AS [Tipo Cliente],
+            EF.ENC_FAC_Numero                                                    AS [Número Factura],
+            FORMAT(EF.ENC_FAC_FechaHora, 'yyyy-MM-dd HH:mm:ss')                 AS [Fecha y Hora],
+            (SELECT STRING_AGG(NombreUbicacion, ', ') WITHIN GROUP (ORDER BY NombreUbicacion)
+             FROM (SELECT DISTINCT NombreUbicacion FROM #LineasFactura) AS T)    AS [Sucursales],
+            CLI.PER_NombreCompleto                                               AS [Cliente],
+            CLI.PER_Identificacion                                               AS [Identificación],
+            TP_CLI.TIPO_PER_Nombre                                               AS [Tipo Cliente],
             CASE
-                WHEN @Persona_ID_Ejecutor = @Cliente_ID
-                    THEN 'Auto-compra'
-                ELSE 
-                    @NombreEjecutor + ' (' + @RolEjecutor + ')'
-            END                                                 AS [Atendido por],
-            EF.ENC_FAC_Subtotal                                 AS [Subtotal],
-            EF.ENC_FAC_DescuentoTotal                           AS [Descuento Total],
-            EF.ENC_FAC_ImpuestoPct                              AS [IVA %],
-            EF.ENC_FAC_ImpuestoTotal                            AS [IVA],
-            EF.ENC_FAC_CostoEnvio                               AS [Costo Envío],
-            EF.ENC_FAC_Total                                    AS [Total],
-            CASE
-                WHEN ENT.ENC_ENT_CLI_ID IS NOT NULL 
-                    THEN 'Sí'
-                ELSE 
-                    'No'
-            END                                                 AS [Con Entrega],
-            CONVERT(VARCHAR(10), ENT.ENC_ENT_CLI_FechaEntrega, 120)
-                                                                AS [Fecha Entrega],
-            ENT.ENC_ENT_CLI_DireccionEntrega                    AS [Dirección Entrega],
-            ENT.ENC_ENT_CLI_Observaciones                       AS [Observaciones],
-            EE.EST_ENT_Nombre                                   AS [Estado Entrega],
-            @NombreTipoAnterior                                 AS [Categoría Anterior],
-            @NombreTipoNuevo                                    AS [Categoría Actual],
-            CASE
-                WHEN @NuevoTipo_PER_ID IS NOT NULL
-                    THEN '¡Subió de categoría!'
-                ELSE
-                    'Sin cambio'
-            END                                                 AS [Upgrade]
+                WHEN @Persona_ID_Ejecutor = @Cliente_ID THEN 'Auto-compra'
+                ELSE @NombreEjecutor + ' (' + @RolEjecutor + ')'
+            END                                                                  AS [Atendido por],
+            EF.ENC_FAC_Subtotal                                                  AS [Subtotal],
+            EF.ENC_FAC_DescuentoTotal                                            AS [Descuento Total],
+            EF.ENC_FAC_ImpuestoPct                                               AS [IVA %],
+            EF.ENC_FAC_ImpuestoTotal                                             AS [IVA],
+            EF.ENC_FAC_CostoEnvio                                                AS [Costo Envío],
+            EF.ENC_FAC_Total                                                     AS [Total],
+            CASE WHEN ENT.ENC_ENT_CLI_ID IS NOT NULL THEN 'Sí' ELSE 'No' END    AS [Con Entrega],
+            FORMAT(ENT.ENC_ENT_CLI_FechaEntrega, 'yyyy-MM-dd')                  AS [Fecha Entrega],
+            ENT.ENC_ENT_CLI_DireccionEntrega                                     AS [Dirección Entrega],
+            ENT.ENC_ENT_CLI_Observaciones                                        AS [Observaciones],
+            EE.EST_ENT_Nombre                                                    AS [Estado Entrega],
+            @NombreTipoAnterior                                                  AS [Categoría Anterior],
+            @NombreTipoNuevo                                                     AS [Categoría Actual],
+            CASE WHEN @NuevoTipo_PER_ID IS NOT NULL THEN '¡Subió de categoría!' ELSE 'Sin cambio' END AS [Upgrade]
         FROM DBO.ENC_FACTURAS_TB EF
-        INNER JOIN DBO.PERSONAS_TB CLI
-            ON EF.ENC_FAC_PER_ID = CLI.PER_ID
-        INNER JOIN DBO.TIPOS_PERSONAS_TB TP_CLI
-            ON CLI.PER_TIPO_PER_ID = TP_CLI.TIPO_PER_ID
-        LEFT JOIN DBO.ENC_ENTREGAS_CLIENTES_TB ENT
-            ON EF.ENC_FAC_ID = ENT.ENC_ENT_CLI_ENC_FAC_ID
-        LEFT JOIN DBO.ESTADOS_ENTREGAS_TB EE
-            ON ENT.ENC_ENT_CLI_EST_ENT_ID = EE.EST_ENT_ID
+        INNER JOIN DBO.PERSONAS_TB CLI              ON EF.ENC_FAC_PER_ID           = CLI.PER_ID
+        INNER JOIN DBO.TIPOS_PERSONAS_TB TP_CLI     ON CLI.PER_TIPO_PER_ID          = TP_CLI.TIPO_PER_ID
+        LEFT  JOIN DBO.ENC_ENTREGAS_CLIENTES_TB ENT ON EF.ENC_FAC_ID               = ENT.ENC_ENT_CLI_ENC_FAC_ID
+        LEFT  JOIN DBO.ESTADOS_ENTREGAS_TB EE       ON ENT.ENC_ENT_CLI_EST_ENT_ID  = EE.EST_ENT_ID
         WHERE EF.ENC_FAC_ID = @ENC_FAC_ID;
 
-        -- Detalle de líneas
+        -- 14. Respuesta: detalle de líneas (incluye ubicación usada por producto)
         SELECT
-            DF.DET_FAC_Cantidad                             AS [Cantidad],
-            PRD.PRD_Descripcion                             AS [Producto],
-            TP.TIPO_PRD_Nombre                              AS [Tipo],
-            MP.MARC_PRD_Nombre                              AS [Marca],
-            DF.DET_FAC_PrecioUnitario                       AS [Precio Unitario],
-            ISNULL(D.DESC_NombreComercial, 'Sin descuento') AS [Descuento Producto],
-            @DescuentoPctCliente                            AS [Descuento Cliente %],
-            DF.DET_FAC_DescuentoMonto                       AS [Monto Descuento],
-            DF.DET_FAC_SubtotalLinea                        AS [Subtotal Línea],
-            DF.DET_FAC_TotalLinea                           AS [Total Línea]
+            LF.NombreUbicacion                               AS [Ubicación],
+            DF.DET_FAC_Cantidad                              AS [Cantidad],
+            PRD.PRD_Descripcion                              AS [Producto],
+            TP.TIPO_PRD_Nombre                               AS [Tipo],
+            MP.MARC_PRD_Nombre                               AS [Marca],
+            DF.DET_FAC_PrecioUnitario                        AS [Precio Unitario],
+            ISNULL(D.DESC_NombreComercial, 'Sin descuento')  AS [Descuento Producto],
+            @DescuentoPctCliente                             AS [Descuento Cliente %],
+            DF.DET_FAC_DescuentoMonto                        AS [Monto Descuento],
+            DF.DET_FAC_SubtotalLinea                         AS [Subtotal Línea],
+            DF.DET_FAC_TotalLinea                            AS [Total Línea]
         FROM DBO.DET_FACTURAS_TB DF
-        INNER JOIN DBO.PRODUCTOS_TB PRD
-            ON DF.DET_FAC_PRD_ID = PRD.PRD_ID
-        INNER JOIN DBO.TIPOS_PRODUCTOS_TB TP
-            ON PRD.PRD_TIPO_PRD_ID = TP.TIPO_PRD_ID
-        INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP
-            ON PRD.PRD_MARC_PRD_ID = MP.MARC_PRD_ID
-        LEFT JOIN DBO.DESCUENTOS_TB D
-            ON DF.DET_FAC_DESC_ID = D.DESC_ID
-                AND D.DESC_DescuentoPct > 0  -- Excluir el registro neutro del display
+        INNER JOIN DBO.PRODUCTOS_TB PRD      ON DF.DET_FAC_PRD_ID    = PRD.PRD_ID
+        INNER JOIN DBO.TIPOS_PRODUCTOS_TB TP  ON PRD.PRD_TIPO_PRD_ID  = TP.TIPO_PRD_ID
+        INNER JOIN DBO.MARCAS_PRODUCTOS_TB MP ON PRD.PRD_MARC_PRD_ID  = MP.MARC_PRD_ID
+        INNER JOIN #LineasFactura LF          ON DF.DET_FAC_PRD_ID    = LF.PRD_ID
+        LEFT  JOIN DBO.DESCUENTOS_TB D        ON DF.DET_FAC_DESC_ID   = D.DESC_ID
+                                              AND D.DESC_DescuentoPct > 0
         WHERE DF.DET_FAC_ENC_FAC_ID = @ENC_FAC_ID
-        ORDER BY PRD.PRD_Descripcion;
+        ORDER BY LF.NombreUbicacion, PRD.PRD_Descripcion;
 
-        -- Limpieza de tablas temporales
         DROP TABLE IF EXISTS #ProductosFactura;
         DROP TABLE IF EXISTS #LineasFactura;
 
     END TRY
     BEGIN CATCH
 
-        IF @@TRANCOUNT > 0 ROLLBACK;
+        -- XACT_STATE() = -1: transacción doomed, solo se puede hacer rollback
+        -- XACT_STATE() =  1: transacción activa, se puede rollback
+        -- XACT_STATE() =  0: sin transacción activa
+        IF XACT_STATE() <> 0 ROLLBACK;
 
-        -- Limpieza de cursores si quedaron abiertos por error
         IF CURSOR_STATUS('local', 'cur_productos') >= 0
         BEGIN CLOSE cur_productos; DEALLOCATE cur_productos; END;
 
-        -- Limpieza de tablas temporales
         DROP TABLE IF EXISTS #ProductosFactura;
         DROP TABLE IF EXISTS #LineasFactura;
 
         EXEC SP_SET_SESSION_CONTEXT 'PERSONA_ID', NULL;
         EXEC SP_SET_SESSION_CONTEXT 'ORIGEN',     NULL;
 
-        DECLARE @ErrorMessage   NVARCHAR(4000) = ERROR_MESSAGE();
-        DECLARE @ErrorSeverity  INT            = ERROR_SEVERITY();
-        DECLARE @ErrorState     INT            = ERROR_STATE();
-
-        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+        -- THROW sin argumentos: re-lanza el error original conservando número, severidad y estado
+        THROW;
 
     END CATCH
 END;
