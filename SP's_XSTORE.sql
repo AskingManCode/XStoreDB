@@ -5582,27 +5582,27 @@ BEGIN
         END;
 
         SELECT
-            EF.ENC_FAC_Numero                                       AS [Número Factura],
-            CONVERT(VARCHAR(19), EF.ENC_FAC_FechaHora, 120)         AS [Fecha y Hora],
-            CLI.PER_NombreCompleto                                  AS [Cliente],
-            CLI.PER_Identificacion                                  AS [Identificación],
-            TP.TIPO_PER_Nombre                                      AS [Tipo Cliente],
-            EF.ENC_FAC_Subtotal                                     AS [Subtotal],
-            EF.ENC_FAC_DescuentoTotal                               AS [Descuento Total],
-            EF.ENC_FAC_ImpuestoPct                                  AS [IVA %],
-            EF.ENC_FAC_ImpuestoTotal                                AS [IVA],
-            EF.ENC_FAC_CostoEnvio                                   AS [Costo Envío],
-            EF.ENC_FAC_Total                                        AS [Total],
+            EF.ENC_FAC_Numero AS [Número Factura],
+            CONVERT(VARCHAR(19), EF.ENC_FAC_FechaHora, 120) AS [Fecha y Hora],
+            CLI.PER_NombreCompleto AS [Cliente],
+            CLI.PER_Identificacion AS [Identificación],
+            TP.TIPO_PER_Nombre AS [Tipo Cliente],
+            EF.ENC_FAC_Subtotal AS [Subtotal],
+            EF.ENC_FAC_DescuentoTotal AS [Descuento Total],
+            EF.ENC_FAC_ImpuestoPct AS [IVA %],
+            EF.ENC_FAC_ImpuestoTotal AS [IVA],
+            EF.ENC_FAC_CostoEnvio AS [Costo Envío],
+            EF.ENC_FAC_Total AS [Total],
             CASE
                 WHEN ENT.ENC_ENT_CLI_ID IS NOT NULL
                     THEN 'Sí'
                 ELSE
                     'No'
-            END                                                     AS [Con Entrega],
+            END AS [Con Entrega],
             CONVERT(VARCHAR(10), ENT.ENC_ENT_CLI_FechaEntrega, 120) AS [Fecha Entrega],
-            ENT.ENC_ENT_CLI_DireccionEntrega                        AS [Dirección Entrega],
-            ISNULL(ENT.ENC_ENT_CLI_Observaciones, 'N/A')            AS [Observaciones Entrega],
-            ISNULL(EE.EST_ENT_Nombre, 'N/A')                        AS [Estado Entrega]
+            ENT.ENC_ENT_CLI_DireccionEntrega AS [Dirección Entrega],
+            ISNULL(ENT.ENC_ENT_CLI_Observaciones, 'N/A') AS [Observaciones Entrega],
+            ISNULL(EE.EST_ENT_Nombre, 'N/A') AS [Estado Entrega]
         FROM DBO.ENC_FACTURAS_TB EF
         INNER JOIN DBO.PERSONAS_TB CLI
             ON EF.ENC_FAC_PER_ID = CLI.PER_ID
