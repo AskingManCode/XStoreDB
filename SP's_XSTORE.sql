@@ -5529,3 +5529,152 @@ BEGIN
 END;
 GO
 
+
+CREATE OR ALTER PROCEDURE DBO.CONSULTAR_FACTURAS_SP
+    @NombreUsuario      VARCHAR(75),
+    @FiltroCliente      VARCHAR(100) = NULL,  -- Búsqueda parcial: Nombre o Identificación
+    @FiltroNumero       VARCHAR(75)  = NULL,  -- Número exacto de factura
+    @FechaDesde         DATE         = NULL,
+    @FechaHasta         DATE         = NULL
+AS
+BEGIN
+
+    SET NOCOUNT ON;
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    DECLARE @Persona_ID  INT;
+    DECLARE @RolEjecutor VARCHAR(50);
+    DECLARE @Descripcion VARCHAR(250);
+
+    SET @FiltroCliente = NULLIF(TRIM(ISNULL(@FiltroCliente, '')), '');
+    SET @FiltroNumero  = NULLIF(TRIM(ISNULL(@FiltroNumero,  '')), '');
+
+    BEGIN TRY
+
+        -- Validación de usuario activo y obtención de rol
+        SELECT
+            @Persona_ID  = S.SESION_PER_ID,
+            @RolEjecutor = R.ROL_Nombre
+        FROM DBO.SESIONES_TB S
+        INNER JOIN DBO.ROLES_TB R
+            ON S.SESION_ROL_ID = R.ROL_ID
+        WHERE S.SESION_NombreUsuario = @NombreUsuario
+            AND S.SESION_Estado = 1;
+
+        IF @Persona_ID IS NULL
+        BEGIN
+            RAISERROR('Error: El usuario [%s] no es válido.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        IF @RolEjecutor NOT IN ('Administrador', 'Cliente')
+        BEGIN
+            RAISERROR('Acceso denegado: El usuario [%s] no tiene permisos para consultar facturas.', 16, 1, @NombreUsuario);
+            RETURN;
+        END;
+
+        -- Validar coherencia de rango de fechas
+        IF @FechaDesde IS NOT NULL AND @FechaHasta IS NOT NULL
+            AND @FechaHasta < @FechaDesde
+        BEGIN
+            RAISERROR('Error: La fecha hasta no puede ser anterior a la fecha desde.', 16, 1);
+            RETURN;
+        END;
+
+        SELECT
+            EF.ENC_FAC_Numero                                       AS [Número Factura],
+            CONVERT(VARCHAR(19), EF.ENC_FAC_FechaHora, 120)         AS [Fecha y Hora],
+            CLI.PER_NombreCompleto                                  AS [Cliente],
+            CLI.PER_Identificacion                                  AS [Identificación],
+            TP.TIPO_PER_Nombre                                      AS [Tipo Cliente],
+            EF.ENC_FAC_Subtotal                                     AS [Subtotal],
+            EF.ENC_FAC_DescuentoTotal                               AS [Descuento Total],
+            EF.ENC_FAC_ImpuestoPct                                  AS [IVA %],
+            EF.ENC_FAC_ImpuestoTotal                                AS [IVA],
+            EF.ENC_FAC_CostoEnvio                                   AS [Costo Envío],
+            EF.ENC_FAC_Total                                        AS [Total],
+            CASE
+                WHEN ENT.ENC_ENT_CLI_ID IS NOT NULL
+                    THEN 'Sí'
+                ELSE
+                    'No'
+            END                                                     AS [Con Entrega],
+            CONVERT(VARCHAR(10), ENT.ENC_ENT_CLI_FechaEntrega, 120) AS [Fecha Entrega],
+            ENT.ENC_ENT_CLI_DireccionEntrega                        AS [Dirección Entrega],
+            ISNULL(ENT.ENC_ENT_CLI_Observaciones, 'N/A')            AS [Observaciones Entrega],
+            ISNULL(EE.EST_ENT_Nombre, 'N/A')                        AS [Estado Entrega]
+        FROM DBO.ENC_FACTURAS_TB EF
+        INNER JOIN DBO.PERSONAS_TB CLI
+            ON EF.ENC_FAC_PER_ID = CLI.PER_ID
+        INNER JOIN DBO.TIPOS_PERSONAS_TB TP
+            ON CLI.PER_TIPO_PER_ID = TP.TIPO_PER_ID
+        LEFT JOIN DBO.ENC_ENTREGAS_CLIENTES_TB ENT
+            ON EF.ENC_FAC_ID = ENT.ENC_ENT_CLI_ENC_FAC_ID
+        LEFT JOIN DBO.ESTADOS_ENTREGAS_TB EE
+            ON ENT.ENC_ENT_CLI_EST_ENT_ID = EE.EST_ENT_ID
+        WHERE
+            -- Cliente solo ve las suyas, Administrador ve todas
+            (@RolEjecutor != 'Cliente' OR CLI.PER_ID = @Persona_ID)
+            -- Filtro parcial por nombre o identificación del cliente
+            AND (
+                @FiltroCliente IS NULL
+                OR CLI.PER_NombreCompleto LIKE '%' + @FiltroCliente + '%'
+                OR CLI.PER_Identificacion LIKE '%' + @FiltroCliente + '%'
+            )
+            -- Filtro por número de factura exacto
+            AND (@FiltroNumero IS NULL OR EF.ENC_FAC_Numero = @FiltroNumero)
+            -- Filtro por rango de fecha de factura
+            AND (@FechaDesde IS NULL OR CAST(EF.ENC_FAC_FechaHora AS DATE) >= @FechaDesde)
+            AND (@FechaHasta IS NULL OR CAST(EF.ENC_FAC_FechaHora AS DATE) <= @FechaHasta)
+        ORDER BY
+            EF.ENC_FAC_FechaHora DESC;
+
+        -- Auditoría
+        BEGIN TRY
+            SET @Descripcion = 'Se usó CONSULTAR_FACTURAS_SP';
+
+            IF @FiltroCliente IS NOT NULL
+                SET @Descripcion = @Descripcion + ', cliente [' + LEFT(@FiltroCliente, 20) + ']';
+
+            IF @FiltroNumero IS NOT NULL
+                SET @Descripcion = @Descripcion + ', factura [' + @FiltroNumero + ']';
+
+            IF @FechaDesde IS NOT NULL OR @FechaHasta IS NOT NULL
+                SET @Descripcion = @Descripcion + ', rango ['
+                    + ISNULL(CONVERT(VARCHAR(10), @FechaDesde, 120), '*')
+                    + ' a '
+                    + ISNULL(CONVERT(VARCHAR(10), @FechaHasta, 120), '*') + ']';
+
+            IF @FiltroCliente IS NULL AND @FiltroNumero IS NULL
+               AND @FechaDesde IS NULL AND @FechaHasta IS NULL
+                SET @Descripcion = @Descripcion + ' sin filtro específico (Todos).';
+            ELSE
+                SET @Descripcion = LEFT(@Descripcion, 247) + '.';
+
+            EXEC DBO.REGISTRAR_AUDITORIA_SP
+                @Persona_ID    = @Persona_ID,
+                @Accion        = 'SELECT',
+                @TablaAfectada = 'ENC_FACTURAS_TB',
+                @FilaAfectada  = 0,
+                @Descripcion   = @Descripcion,
+                @Antes         = NULL,
+                @Despues       = NULL;
+        END TRY
+        BEGIN CATCH
+            -- Falla en auditoría no debe interrumpir la consulta
+        END CATCH
+
+    END TRY
+    BEGIN CATCH
+
+        DECLARE @ErrorMessage  NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT            = ERROR_SEVERITY();
+        DECLARE @ErrorState    INT            = ERROR_STATE();
+
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+
+    END CATCH
+
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+END;
+GO
