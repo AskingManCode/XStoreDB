@@ -5441,7 +5441,7 @@ BEGIN
         INNER JOIN DBO.ROLES_TB R ON S.SESION_ROL_ID = R.ROL_ID
         WHERE S.SESION_NombreUsuario = @NombreUsuario
           AND S.SESION_Estado = 1
-          AND R.ROL_Nombre IN ('Administrador', 'Vendedor');
+          AND R.ROL_Nombre IN ('Administrador', 'Vendedor', 'Cliente');
 
         IF @Persona_ID IS NULL
         BEGIN
