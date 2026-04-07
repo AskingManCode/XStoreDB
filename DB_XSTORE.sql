@@ -319,7 +319,7 @@ BEGIN
 	    DESC_ID INT IDENTITY(1,1), -- PK
         DESC_NombreComercial VARCHAR(100) NOT NULL, -- Nombre Comercial que ve el cliente
         DESC_Descripcion VARCHAR(175) NOT NULL,   -- N/A Si no hay descuento 
-        DESC_CAT_DESC_ID INT NOT NULL, -- FK  
+        DESC_CAT_DESC_ID INT NULL, -- FK  
         DESC_DescuentoPct DECIMAL (5,2) NOT NULL -- 0.00 Si no hay descuento
             CONSTRAINT DF_DESC_DescuentoPct
                 DEFAULT (0.00),
